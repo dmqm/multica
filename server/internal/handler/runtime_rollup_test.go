@@ -403,3 +403,125 @@ VALUES ($1, 'claude', 'm-delete', 500, 50, $2, $2)
 		t.Errorf("after issue delete: expected 0 (bucket cleared), got %d", tokens)
 	}
 }
+
+// TestRollupTaskUsageDaily_WorkspaceMismatch constructs an atq row whose
+// agent.workspace_id != issue.workspace_id and verifies that the rollup
+// resolves workspace_id consistently from `agent` across triggers,
+// dirty_from_updates, and recompute. If any of those paths leaked back
+// to the issue.workspace_id the dirty queue would be misaligned with
+// the recompute join and the bucket would either be silently dropped
+// (recompute returns 0 rows → deleted_empty branch fires) or attributed
+// to the wrong workspace.
+//
+// The schema does not enforce agent.workspace_id == issue.workspace_id,
+// so this canary keeps the alignment honest as the schema evolves.
+func TestRollupTaskUsageDaily_WorkspaceMismatch(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	// Create a foreign workspace + a runtime + an agent there.
+	var foreignWorkspaceID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO workspace (name, slug) VALUES ('ws-mismatch', 'ws-mismatch-' || gen_random_uuid()::text) RETURNING id
+`).Scan(&foreignWorkspaceID); err != nil {
+		t.Fatalf("create foreign workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
+	})
+	var foreignRuntimeID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO agent_runtime (
+workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at
+)
+VALUES ($1, NULL, 'mismatch-rt', 'cloud', 'mismatch-rt', 'online', '{}'::jsonb, '{}'::jsonb, now())
+RETURNING id
+`, foreignWorkspaceID).Scan(&foreignRuntimeID); err != nil {
+		t.Fatalf("create foreign runtime: %v", err)
+	}
+	var foreignAgentID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO agent (
+workspace_id, name, description, runtime_mode, runtime_config,
+runtime_id, visibility, max_concurrent_tasks, owner_id,
+instructions, custom_env, custom_args, mcp_config
+)
+VALUES ($1, 'mismatch-agent', '', 'cloud', '{}'::jsonb, $2, 'private', 1, $3, '', '{}'::jsonb, '[]'::jsonb, '[]'::jsonb)
+RETURNING id
+`, foreignWorkspaceID, foreignRuntimeID, testUserID).Scan(&foreignAgentID); err != nil {
+		t.Fatalf("create foreign agent: %v", err)
+	}
+
+	// Issue lives in the *primary* test workspace, agent in foreign one.
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO issue (workspace_id, title, creator_id, creator_type)
+VALUES ($1, 'mismatch test', $2, 'member') RETURNING id
+`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	day := time.Date(2021, 9, 9, 0, 0, 0, 0, time.UTC)
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
+VALUES ($1, $2, $3, 'completed', $4) RETURNING id
+`, foreignAgentID, issueID, foreignRuntimeID, day.Add(time.Hour)).Scan(&taskID); err != nil {
+		t.Fatalf("insert atq: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at, updated_at)
+VALUES ($1, 'claude', 'm-mismatch', 333, 33, $2, $2)
+`, taskID, day.Add(time.Hour)); err != nil {
+		t.Fatalf("insert task_usage: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM task_usage_daily WHERE bucket_date = $1::date AND model = 'm-mismatch'`, day)
+		testPool.Exec(ctx, `DELETE FROM task_usage_daily_dirty WHERE bucket_date = $1::date AND model = 'm-mismatch'`, day)
+	})
+
+	// Rollup. The bucket must be attributed to FOREIGN workspace
+	// (agent.workspace_id), not the primary one (issue.workspace_id).
+	if _, err := testPool.Exec(ctx, `SELECT rollup_task_usage_daily_window('-infinity'::timestamptz, 'infinity'::timestamptz)`); err != nil {
+		t.Fatalf("rollup: %v", err)
+	}
+	var foreignTokens, primaryTokens int64
+	testPool.QueryRow(ctx, `SELECT COALESCE(SUM(input_tokens),0) FROM task_usage_daily WHERE workspace_id = $1 AND bucket_date = $2::date AND model = 'm-mismatch'`, foreignWorkspaceID, day).Scan(&foreignTokens)
+	testPool.QueryRow(ctx, `SELECT COALESCE(SUM(input_tokens),0) FROM task_usage_daily WHERE workspace_id = $1 AND bucket_date = $2::date AND model = 'm-mismatch'`, testWorkspaceID, day).Scan(&primaryTokens)
+	if foreignTokens != 333 {
+		t.Fatalf("expected foreign workspace bucket = 333, got %d", foreignTokens)
+	}
+	if primaryTokens != 0 {
+		t.Errorf("expected primary workspace bucket = 0, got %d", primaryTokens)
+	}
+
+	// Now reassign atq.runtime_id within the foreign workspace and
+	// verify the trigger / recompute pair still agree on workspace_id.
+	var foreignRuntime2ID string
+	if err := testPool.QueryRow(ctx, `
+INSERT INTO agent_runtime (
+workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at
+)
+VALUES ($1, NULL, 'mismatch-rt2', 'cloud', 'mismatch-rt2', 'online', '{}'::jsonb, '{}'::jsonb, now())
+RETURNING id
+`, foreignWorkspaceID).Scan(&foreignRuntime2ID); err != nil {
+		t.Fatalf("create foreign runtime 2: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET runtime_id = $1 WHERE id = $2`, foreignRuntime2ID, taskID); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `SELECT rollup_task_usage_daily_window('-infinity'::timestamptz, 'infinity'::timestamptz)`); err != nil {
+		t.Fatalf("rollup after reassign: %v", err)
+	}
+	var oldRTTokens, newRTTokens int64
+	testPool.QueryRow(ctx, `SELECT COALESCE(SUM(input_tokens),0) FROM task_usage_daily WHERE runtime_id = $1 AND bucket_date = $2::date AND model = 'm-mismatch'`, foreignRuntimeID, day).Scan(&oldRTTokens)
+	testPool.QueryRow(ctx, `SELECT COALESCE(SUM(input_tokens),0) FROM task_usage_daily WHERE runtime_id = $1 AND bucket_date = $2::date AND model = 'm-mismatch'`, foreignRuntime2ID, day).Scan(&newRTTokens)
+	if oldRTTokens != 0 || newRTTokens != 333 {
+		t.Fatalf("after reassign in mismatched ws: expected old=0 new=333, got old=%d new=%d", oldRTTokens, newRTTokens)
+	}
+}

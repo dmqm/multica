@@ -151,17 +151,25 @@ BEGIN
     WITH
     -- Source 1: rows with updated_at in this window (steady state) plus
     -- the legacy-row OR branch for NULL updated_at (covered by partial
-    -- index idx_task_usage_created_at_legacy).
+    -- index idx_task_usage_created_at_legacy from migration 078).
+    --
+    -- workspace_id is resolved via `agent`, NOT `issue`, to match the
+    -- trigger functions above. There is no schema-level FK guaranteeing
+    -- agent.workspace_id == issue.workspace_id, so mixing the two
+    -- sources would let dirty_from_updates / recomputed disagree with
+    -- dirty_from_queue's view of which workspace a task belongs to.
+    -- Going through agent everywhere keeps trigger / discovery /
+    -- recompute aligned without leaning on an unenforced invariant.
     dirty_from_updates AS (
         SELECT DISTINCT
             DATE(tu.created_at) AS bucket_date,
-            i.workspace_id      AS workspace_id,
+            a.workspace_id      AS workspace_id,
             atq.runtime_id      AS runtime_id,
             tu.provider         AS provider,
             tu.model            AS model
           FROM task_usage tu
           JOIN agent_task_queue atq ON atq.id      = tu.task_id
-          JOIN issue            i   ON i.id        = atq.issue_id
+          JOIN agent            a   ON a.id        = atq.agent_id
          WHERE atq.runtime_id IS NOT NULL
            AND (
                 (tu.updated_at >= p_from AND tu.updated_at < p_to)
@@ -181,7 +189,8 @@ BEGIN
         UNION
         SELECT * FROM dirty_from_queue
     ),
-    -- Recompute each dirty bucket from ground truth.
+    -- Recompute each dirty bucket from ground truth. Same agent-based
+    -- workspace resolution as dirty_from_updates above.
     recomputed AS (
         SELECT
             dk.bucket_date,
@@ -196,8 +205,8 @@ BEGIN
             COUNT(*)::bigint                    AS event_count
           FROM dirty_keys dk
           JOIN agent_task_queue atq ON atq.runtime_id = dk.runtime_id
-          JOIN issue            i   ON i.id           = atq.issue_id
-                                    AND i.workspace_id = dk.workspace_id
+          JOIN agent            a   ON a.id           = atq.agent_id
+                                    AND a.workspace_id = dk.workspace_id
           JOIN task_usage       tu  ON tu.task_id     = atq.id
                                     AND tu.provider   = dk.provider
                                     AND tu.model      = dk.model

@@ -1,6 +1,6 @@
 // Backfill_task_usage_daily seeds the `task_usage_daily` rollup table
 // from the historical contents of `task_usage`. Intended to be run once
-// after migrations 072..077 are applied, before flipping the
+// after migrations 072..078 are applied, before flipping the
 // USAGE_DAILY_ROLLUP_ENABLED feature flag and before scheduling the
 // pg_cron job. The cron schedule is intentionally NOT created by a
 // migration (see 076 header) — operators run this backfill, then
@@ -132,7 +132,7 @@ func stampWatermark(ctx context.Context, pool *pgxpool.Pool) {
 		os.Exit(1)
 	}
 	if tag.RowsAffected() == 0 {
-		slog.Warn("no rollup state row to stamp; was migration 070 applied?")
+		slog.Warn("no rollup state row to stamp; was migration 073 applied?")
 		return
 	}
 	fmt.Println("watermark stamped to now() - 5 minutes")
