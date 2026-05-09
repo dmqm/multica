@@ -72,7 +72,12 @@ export function AgentCreatePanel({
   const userId = useAuthStore((s) => s.user?.id);
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  // Pull `isSuccess` so the stale-id sweep below can distinguish "still
+  // loading" from "loaded as empty". Reading length alone treats both as
+  // empty and incorrectly clears a valid persisted preference on every open.
+  const { data: projects = [], isSuccess: projectsLoaded } = useQuery(
+    projectListOptions(wsId),
+  );
 
   const memberRole = useMemo(
     () => members.find((m) => m.user_id === userId)?.role,
@@ -125,17 +130,24 @@ export function AgentCreatePanel({
   // Project selection — defaults to the last project the user picked in this
   // workspace. `data?.project_id` lets the modal opener seed a one-shot
   // override (e.g. a future "+ Issue" button on a project page); it does NOT
-  // replace the persisted default. We only clear a stale id once the query
-  // has actually resolved with at least one project — clearing on the empty
-  // initial render would wipe the persisted preference on every open.
+  // replace the persisted default.
   const [projectId, setProjectId] = useState<string | null>(() => {
     const seed = (data?.project_id as string | undefined) ?? lastProjectId;
     return seed ?? null;
   });
+
+  // Stale-id sweep. Once the project list query has actually resolved
+  // (`isSuccess` — distinct from "data is the empty default during loading"),
+  // a `projectId` that isn't in the list means the project was deleted in
+  // another session. Clear BOTH local state and the persisted preference;
+  // dropping only local state would leave the deleted UUID in `lastProjectId`,
+  // and the next open would re-seed it and submit the same dead value.
   useEffect(() => {
-    if (projectId === null || projects.length === 0) return;
-    if (!projects.some((p) => p.id === projectId)) setProjectId(null);
-  }, [projects, projectId]);
+    if (!projectsLoaded || projectId === null) return;
+    if (projects.some((p) => p.id === projectId)) return;
+    setProjectId(null);
+    if (lastProjectId === projectId) setLastProjectId(null);
+  }, [projectsLoaded, projects, projectId, lastProjectId, setLastProjectId]);
 
   // Daemon CLI version gate. The agent-create flow needs the runtime's
   // bundled multica CLI to be ≥ MIN_QUICK_CREATE_CLI_VERSION; older

@@ -24,6 +24,14 @@ const mockQuickCreateStore = {
   setKeepOpen: mockSetKeepOpen,
 };
 
+// Per-test override for the projects query, so tests can swap between
+// "loaded as empty" (the deleted-project case) and "still loading" without
+// re-mocking the whole module.
+const mockProjectsQuery = vi.hoisted(() => ({
+  data: [] as Array<{ id: string; title: string; icon: string | null }>,
+  isSuccess: true,
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     switch (queryKey[0]) {
@@ -36,7 +44,7 @@ vi.mock("@tanstack/react-query", () => ({
       case "runtimes":
         return { data: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] };
       case "projects":
-        return { data: [] };
+        return mockProjectsQuery;
       default:
         return { data: [] };
     }
@@ -220,8 +228,11 @@ describe("AgentCreatePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockQuickCreateStore.lastAgentId = null;
+    mockQuickCreateStore.lastProjectId = null;
     mockQuickCreateStore.prompt = "Persisted draft prompt";
     mockQuickCreateStore.keepOpen = false;
+    mockProjectsQuery.data = [];
+    mockProjectsQuery.isSuccess = true;
     mockQuickCreateIssue.mockResolvedValue(undefined);
     mockSetKeepOpen.mockImplementation((value: boolean) => {
       mockQuickCreateStore.keepOpen = value;
@@ -269,5 +280,36 @@ describe("AgentCreatePanel", () => {
     expect(mockClearPrompt).toHaveBeenCalled();
     expect(mockSetLastMode).toHaveBeenCalledWith("agent");
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // If the user's persisted `lastProjectId` points at a project that has
+  // been deleted (or moved to another workspace), the modal must not keep
+  // submitting that dead UUID. Once the projects query resolves and the id
+  // is missing, we clear BOTH local state and the persisted preference;
+  // dropping only local state would leave the next open re-seeding the same
+  // dead value and trigger the server's `project not found` rejection.
+  it("clears a stale persisted project once the projects list resolves without it", async () => {
+    mockQuickCreateStore.lastProjectId = "deleted-proj";
+    mockProjectsQuery.data = [];
+    mockProjectsQuery.isSuccess = true;
+
+    renderPanel({ onClose: vi.fn() });
+
+    await waitFor(() => {
+      expect(mockSetLastProjectId).toHaveBeenCalledWith(null);
+    });
+  });
+
+  // Mirror case: while the query is still loading, we must NOT preemptively
+  // clear the persisted preference — that would wipe a perfectly valid
+  // selection on every open before the list ever renders.
+  it("keeps the persisted project while the projects list is still loading", () => {
+    mockQuickCreateStore.lastProjectId = "proj-1";
+    mockProjectsQuery.data = [];
+    mockProjectsQuery.isSuccess = false;
+
+    renderPanel({ onClose: vi.fn() });
+
+    expect(mockSetLastProjectId).not.toHaveBeenCalled();
   });
 });
