@@ -199,16 +199,17 @@ export function ChatWindow() {
   // is available; callers must early-return in that case.
   //
   // titleSeed is the first 50 chars of the user's message when called from
-  // send; the upload path passes "" and we fall back to "New chat" as a
-  // placeholder. A follow-up task may back-fill the real title from the
-  // first user message, but this keeps the session list scannable today.
+  // send; the upload path passes "" and we leave the title empty so the
+  // session-dropdown's existing localized `window.untitled` fallback kicks
+  // in. A follow-up task may back-fill the real title from the first user
+  // message — until then this keeps the session list scannable across locales.
   const ensureSession = useCallback(
     async (titleSeed: string): Promise<string | null> => {
       if (activeSessionId) return activeSessionId;
       if (!activeAgent) return null;
       const session = await createSession.mutateAsync({
         agent_id: activeAgent.id,
-        title: titleSeed.slice(0, 50) || "New chat",
+        title: titleSeed.slice(0, 50),
       });
       setActiveSession(session.id);
       return session.id;
