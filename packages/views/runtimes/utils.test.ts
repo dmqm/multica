@@ -1,7 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 
-import { collectUnmappedModels, estimateCost, isModelPriced } from "./utils";
+import {
+  aggregateCostByModel,
+  collectUnmappedModels,
+  estimateCost,
+  isModelPriced,
+} from "./utils";
 
 afterEach(() => {
   // Reset overrides so tests don't bleed pricing state into one another.
@@ -202,5 +207,68 @@ describe("user-supplied custom pricing", () => {
     expect(isModelPriced("gpt-5.5-mini")).toBe(true);
     useCustomPricingStore.getState().removeCustomPricing("gpt-5.5-mini");
     expect(isModelPriced("gpt-5.5-mini")).toBe(false);
+  });
+
+  it("priced + unpriced models in the same window produce a mixed-cost aggregate", () => {
+    // The partial-unmapping case: chart renders normally because some
+    // models are priced, but the unmapped ones silently contribute $0 if
+    // we don't surface them. Confirm aggregateCostByModel exposes both
+    // sides so the UI can show a notice for the gap.
+    const rows = [
+      {
+        ...zeroUsage,
+        model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000,
+        date: "2026-01-01",
+        provider: "anthropic",
+        agent_count: 1,
+      },
+      {
+        ...zeroUsage,
+        model: "fictional-model-x",
+        input_tokens: 1_000_000,
+        date: "2026-01-01",
+        provider: "fictional",
+        agent_count: 1,
+      },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const byModel = aggregateCostByModel(rows as any);
+    const sonnet = byModel.find((r) => r.key === "claude-sonnet-4-6");
+    const fictional = byModel.find((r) => r.key === "fictional-model-x");
+    expect(sonnet?.cost).toBeCloseTo(3, 5);
+    expect(fictional?.cost).toBe(0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(collectUnmappedModels(rows as any)).toEqual(["fictional-model-x"]);
+  });
+
+  it("aggregateCostByModel reflects a newly-saved custom price on re-call with the same input", () => {
+    // Regression for the memo-dependency bug GPT-Boy flagged: aggregate
+    // helpers must give different answers before vs after a price save,
+    // otherwise child components (WhenChart / CostByBlock / ActivityHeatmap)
+    // that memo on query data alone keep showing pre-save totals.
+    const rows = [
+      {
+        ...zeroUsage,
+        model: "fictional-model-x",
+        input_tokens: 1_000_000,
+        date: "2026-01-01",
+        provider: "fictional",
+        agent_count: 1,
+      },
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const before = aggregateCostByModel(rows as any);
+    expect(before[0]?.cost).toBe(0);
+
+    useCustomPricingStore.getState().setCustomPricing("fictional-model-x", {
+      input: 2,
+      output: 8,
+      cacheRead: 0.2,
+      cacheWrite: 2,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const after = aggregateCostByModel(rows as any);
+    expect(after[0]?.cost).toBeCloseTo(2, 5);
   });
 });

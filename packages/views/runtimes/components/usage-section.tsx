@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, ChevronRight } from "lucide-react";
+import { BarChart3, ChevronRight, AlertCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -111,8 +111,10 @@ export function UsageSection({ runtimeId }: { runtimeId: string }) {
     runtimeUsageOptions(runtimeId, 180),
   );
   const [days, setDays] = useState<TimeRange>(30);
-  // Subscribe so user-supplied prices flow through estimateCost on the next
-  // render. The ref itself is unused — the subscription is the point.
+  // Subscribe so the KPI cards (which call estimateCost at render-time, not
+  // through a memo) re-evaluate when the user saves a custom rate. The
+  // aggregate sub-components (WhenChart, CostByBlock, ActivityHeatmap) each
+  // subscribe on their own and pass pricings as a memo dep there.
   useCustomPricingStore((s) => s.pricings);
 
   if (loading) return <UsageSkeleton />;
@@ -154,6 +156,13 @@ export function UsageSection({ runtimeId }: { runtimeId: string }) {
           }))}
         />
       </div>
+
+      {/* Pricing-gap banner. Sits above the KPI grid so a *partial* unmapping
+          (some priced + some unpriced models in the same window) still has
+          a visible entry point into the manual-pricing dialog — otherwise
+          the chart would render normally and the unmapped tokens would silently
+          contribute $0 to totals. */}
+      <UnmappedPricingNotice usage={filtered} />
 
       <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
         <KpiCard
@@ -250,6 +259,10 @@ function WhenChart({
 }) {
   const { t } = useT("runtimes");
   const [tab, setTab] = useState<WhenTab>("daily");
+  // Memo dep — the aggregates below run `estimateCost`, which now consults
+  // the user override store. Without listing pricings here the memos cache
+  // pre-override totals when query data hasn't changed.
+  const pricings = useCustomPricingStore((s) => s.pricings);
 
   // Lazy-fetch hourly cost — only needed when its tab is active. Daily and
   // heatmap derive from the already-cached 90d usage prop.
@@ -258,14 +271,17 @@ function WhenChart({
     enabled: tab === "hourly",
   });
 
-  const { dailyCostStack } = useMemo(() => aggregateByDate(filtered), [filtered]);
+  const { dailyCostStack } = useMemo(
+    () => aggregateByDate(filtered),
+    [filtered, pricings],
+  );
   const hourlyCost = useMemo(
     () =>
       aggregateCostByHour(byHourRows).map((row) => ({
         hour: Number(row.key),
         cost: row.cost,
       })),
-    [byHourRows],
+    [byHourRows, pricings],
   );
 
   return (
@@ -344,7 +360,6 @@ function HourlyTab({
 
 function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
   const { t } = useT("runtimes");
-  const [dialogOpen, setDialogOpen] = useState(false);
   const hasTokens = usage.some(
     (u) =>
       u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens >
@@ -360,6 +375,8 @@ function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
           {t(($) => $.usage.empty_no_usage)}
         </p>
       ) : unmapped.length > 0 ? (
+        // CTA lives in the page-level UnmappedPricingNotice above. Keep the
+        // chart-area copy descriptive only so the two surfaces don't bicker.
         <>
           <p className="text-xs text-muted-foreground">
             {t(($) => $.usage.empty_pricing_missing)}
@@ -370,26 +387,56 @@ function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
           <p className="text-[11px] text-muted-foreground/70">
             {t(($) => $.usage.empty_pricing_hint)}
           </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-1"
-            onClick={() => setDialogOpen(true)}
-          >
-            {t(($) => $.usage.custom_pricing.open_button)}
-          </Button>
-          <CustomPricingDialog
-            open={dialogOpen}
-            onOpenChange={setDialogOpen}
-            unmappedModels={unmapped}
-          />
         </>
       ) : (
         <p className="text-xs text-muted-foreground">
           {t(($) => $.usage.empty_zero_cost)}
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// UnmappedPricingNotice — always-visible banner shown above the KPI grid
+// whenever the selected window contains any model that isn't priced. Covers
+// the partial-unmapping case where the chart still renders (so EmptyChartState
+// never fires) but some tokens are silently contributing $0 to totals.
+// ---------------------------------------------------------------------------
+
+function UnmappedPricingNotice({ usage }: { usage: RuntimeUsage[] }) {
+  const { t } = useT("runtimes");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const unmapped = collectUnmappedModels(usage);
+  if (unmapped.length === 0) return null;
+
+  return (
+    <div
+      role="alert"
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs"
+    >
+      <AlertCircle className="h-4 w-4 shrink-0 text-warning" />
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p className="text-foreground">
+          {t(($) => $.usage.unmapped_notice, { count: unmapped.length })}
+        </p>
+        <p className="truncate font-mono text-[11px] text-muted-foreground">
+          {unmapped.join(", ")}
+        </p>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setDialogOpen(true)}
+      >
+        {t(($) => $.usage.custom_pricing.open_button)}
+      </Button>
+      <CustomPricingDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        unmappedModels={unmapped}
+      />
     </div>
   );
 }
@@ -438,6 +485,9 @@ function CostByBlock({
 }) {
   const { t } = useT("runtimes");
   const [tab, setTab] = useState<"agent" | "model">("agent");
+  // Memo dep — same reason as WhenChart: aggregateCostBy{Agent,Model} call
+  // estimateCost, which now reads the override store.
+  const pricings = useCustomPricingStore((s) => s.pricings);
 
   // by-agent is server-side aggregation (fetched lazily on tab activation).
   // by-model derives from the daily cache the parent already has — free.
@@ -449,8 +499,14 @@ function CostByBlock({
   const wsId = useWorkspaceId();
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
 
-  const byAgent = useMemo(() => aggregateCostByAgent(byAgentRows), [byAgentRows]);
-  const byModel = useMemo(() => aggregateCostByModel(usage), [usage]);
+  const byAgent = useMemo(
+    () => aggregateCostByAgent(byAgentRows),
+    [byAgentRows, pricings],
+  );
+  const byModel = useMemo(
+    () => aggregateCostByModel(usage),
+    [usage, pricings],
+  );
 
   const caption =
     tab === "agent"
