@@ -198,21 +198,39 @@ export function ChatWindow() {
   // get a session_id to hang the attachment on. Returns null when no agent
   // is available; callers must early-return in that case.
   //
+  // Concurrent callers (e.g. user drops a file → handleUploadFile, then
+  // quickly clicks send → handleSend) would each observe activeSessionId
+  // === null and fire a separate createSession.mutateAsync, creating two
+  // sessions and orphaning the attachment on the wrong one. The in-flight
+  // promise ref dedupes those races: the first caller starts the create,
+  // every subsequent caller awaits the same promise until it settles.
+  //
   // titleSeed is the first 50 chars of the user's message when called from
   // send; the upload path passes "" and we leave the title empty so the
   // session-dropdown's existing localized `window.untitled` fallback kicks
   // in. A follow-up task may back-fill the real title from the first user
   // message — until then this keeps the session list scannable across locales.
+  const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
     async (titleSeed: string): Promise<string | null> => {
       if (activeSessionId) return activeSessionId;
       if (!activeAgent) return null;
-      const session = await createSession.mutateAsync({
-        agent_id: activeAgent.id,
-        title: titleSeed.slice(0, 50),
-      });
-      setActiveSession(session.id);
-      return session.id;
+      if (sessionPromiseRef.current) return sessionPromiseRef.current;
+
+      const promise = (async () => {
+        try {
+          const session = await createSession.mutateAsync({
+            agent_id: activeAgent.id,
+            title: titleSeed.slice(0, 50),
+          });
+          setActiveSession(session.id);
+          return session.id;
+        } finally {
+          sessionPromiseRef.current = null;
+        }
+      })();
+      sessionPromiseRef.current = promise;
+      return promise;
     },
     [activeSessionId, activeAgent, createSession, setActiveSession],
   );
