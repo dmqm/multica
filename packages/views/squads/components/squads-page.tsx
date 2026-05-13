@@ -7,6 +7,7 @@ import { AppLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { Users, Plus } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
+import { useModalStore } from "@multica/core/modals";
 import type { Squad } from "@multica/core/types";
 
 export function SquadsPage() {
@@ -28,7 +29,7 @@ export function SquadsPage() {
             <span className="text-xs text-muted-foreground tabular-nums">{squads.length}</span>
           )}
         </div>
-        <Button size="sm" variant="outline">
+        <Button size="sm" variant="outline" onClick={() => useModalStore.getState().open("create-squad")}>
           <Plus className="size-3.5 mr-1.5" />
           New Squad
         </Button>

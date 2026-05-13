@@ -1325,8 +1325,28 @@ export class ApiClient {
     return this.fetch(`/api/squads/${id}`);
   }
 
+  async createSquad(data: { name: string; description?: string; leader_id: string }): Promise<Squad> {
+    return this.fetch("/api/squads", { method: "POST", body: JSON.stringify(data) });
+  }
+
+  async updateSquad(id: string, data: { name?: string; description?: string; leader_id?: string }): Promise<Squad> {
+    return this.fetch(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
+  }
+
+  async deleteSquad(id: string): Promise<void> {
+    await this.fetch(`/api/squads/${id}`, { method: "DELETE" });
+  }
+
   async listSquadMembers(squadId: string): Promise<SquadMember[]> {
     return this.fetch(`/api/squads/${squadId}/members`);
+  }
+
+  async addSquadMember(squadId: string, data: { member_type: string; member_id: string; role?: string }): Promise<SquadMember> {
+    return this.fetch(`/api/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(data) });
+  }
+
+  async removeSquadMember(squadId: string, data: { member_type: string; member_id: string }): Promise<void> {
+    await this.fetch(`/api/squads/${squadId}/members`, { method: "DELETE", body: JSON.stringify(data) });
   }
 
   // Autopilots
