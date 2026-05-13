@@ -274,17 +274,17 @@ export function CreateAgentDialog({
     setStep({ kind: "blank-form" });
   };
 
-  // Template path is one-click — picker card click goes straight to the
-  // API. Defaults: name auto-deduped, runtime = first usable one,
-  // visibility = workspace. User refines on the detail page if needed.
+  // Template path runs from the detail step — the user picks runtime
+  // and model there (Use stays disabled until both are set), so this
+  // helper trusts the options passed in and skips the form-level runtime
+  // state entirely. Defaults: name auto-deduped, visibility = workspace.
   // On 422 with failed_urls the user stays on the template-detail step
   // and the banner there reports the bad URLs; on any other error we
   // surface a toast and reset the spinner so they can retry.
-  const quickCreateFromTemplate = async (tmpl: AgentTemplateSummary) => {
-    if (!selectedRuntime || selectedRuntimeLocked) {
-      toast.error(t(($) => $.create_dialog.no_runtime_toast));
-      return;
-    }
+  const quickCreateFromTemplate = async (
+    tmpl: AgentTemplateSummary,
+    options: { runtimeId: string; model: string },
+  ) => {
     const taken = new Set(existingAgentNames ?? []);
     let candidate = tmpl.name;
     let n = 2;
@@ -299,7 +299,8 @@ export function CreateAgentDialog({
       const resp = await api.createAgentFromTemplate({
         template_slug: tmpl.slug,
         name: candidate,
-        runtime_id: selectedRuntime.id,
+        runtime_id: options.runtimeId,
+        model: options.model || undefined,
         visibility: "workspace",
       });
       if (wsId) {
@@ -552,6 +553,10 @@ export function CreateAgentDialog({
         {step.kind === "template-detail" && (
           <TemplateDetail
             template={step.template}
+            runtimes={runtimes}
+            runtimesLoading={runtimesLoading}
+            members={members}
+            currentUserId={currentUserId}
             onUse={quickCreateFromTemplate}
             creating={creating}
             failedURLs={failedURLs}

@@ -1,44 +1,76 @@
 "use client";
 
-import { Check, ChevronRight, Loader2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Cloud,
+  Loader2,
+  Lock,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { agentTemplateDetailOptions } from "@multica/core/agents/queries";
-import type { AgentTemplateSummary } from "@multica/core/types";
+import { runtimeModelsOptions } from "@multica/core/runtimes";
+import type {
+  AgentTemplateSummary,
+  MemberWithUser,
+  RuntimeDevice,
+} from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@multica/ui/components/ui/popover";
+import { Label } from "@multica/ui/components/ui/label";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
+import { ProviderLogo } from "../../runtimes/components/provider-logo";
+import { ActorAvatar } from "../../common/actor-avatar";
+import { ModelDropdown } from "./model-dropdown";
 import { getAccentClass, getTemplateIcon } from "./template-picker";
+
+export interface TemplateDetailUseOptions {
+  runtimeId: string;
+  model: string;
+}
 
 interface TemplateDetailProps {
   template: AgentTemplateSummary;
-  /** Fired when the user clicks "Use this template" — the dialog calls
-   *  the create API and navigates to the new agent. */
-  onUse: (template: AgentTemplateSummary) => void;
+  /** Workspace runtimes — used to populate the runtime picker. */
+  runtimes: RuntimeDevice[];
+  runtimesLoading?: boolean;
+  /** Members of the workspace, used to label runtime owners. */
+  members: MemberWithUser[];
+  /** Current user id, used to grey-out private runtimes owned by others. */
+  currentUserId: string | null;
+  /** Fired when the user clicks "Use this template". The dialog calls the
+   *  create API with the runtime + model the user picked here. */
+  onUse: (template: AgentTemplateSummary, options: TemplateDetailUseOptions) => void;
   /** True while the parent's create request is in flight; we disable the
    *  Use button so the user can't double-click. */
   creating?: boolean;
   /** Upstream URLs the server reported as unreachable on the most recent
    *  create attempt. Surfaces an inline error banner so the user knows
-   *  *why* Create didn't navigate. The detail step is the only place
-   *  this banner can render — `quickCreateFromTemplate` fires from here
-   *  and never advances to a different step on failure. */
+   *  *why* Create didn't navigate. */
   failedURLs?: readonly string[] | null;
 }
 
 /**
  * Step 3 of the create-agent flow: a read-only preview of the picked
- * template — instructions, skill list with cached descriptions, and a
- * "Use this template" CTA at the bottom. Clicking Use kicks off a
- * one-shot create with default settings (no form step in between).
- *
- * Instructions come from the lazy-fetched detail endpoint (the picker
- * only carries the summary). Cached through TanStack Query keyed by
- * slug with `staleTime: Infinity`, so navigating back and forth between
- * picker and detail doesn't re-fetch. Visual rhythm matches the picker
- * card so the transition feels seamless.
+ * template — runtime + model picker, instructions, skill list, and a
+ * "Use this template" CTA. The CTA stays disabled until the user picks
+ * a runtime *and* a model (or the runtime explicitly doesn't support
+ * per-agent model selection, in which case model is auto-cleared and
+ * not required).
  */
 export function TemplateDetail({
   template,
+  runtimes,
+  runtimesLoading,
+  members,
+  currentUserId,
   onUse,
   creating = false,
   failedURLs,
@@ -50,6 +82,64 @@ export function TemplateDetail({
 
   const Icon = getTemplateIcon(template.icon);
   const accentClass = getAccentClass(template.accent);
+
+  // Runtime + model state — local to this step so the form path's own
+  // selection is untouched. User must pick both before Use is enabled.
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState<string>("");
+  const [model, setModel] = useState<string>("");
+  const [runtimeOpen, setRuntimeOpen] = useState(false);
+
+  const isRuntimeDisabledForUser = (r: RuntimeDevice): boolean => {
+    if (!currentUserId) return false;
+    if (r.owner_id === currentUserId) return false;
+    return r.visibility !== "public";
+  };
+
+  const sortedRuntimes = useMemo(() => {
+    return [...runtimes].sort((a, b) => {
+      const aMine = a.owner_id === currentUserId;
+      const bMine = b.owner_id === currentUserId;
+      if (aMine && !bMine) return -1;
+      if (!aMine && bMine) return 1;
+      const aDisabled = isRuntimeDisabledForUser(a);
+      const bDisabled = isRuntimeDisabledForUser(b);
+      if (!aDisabled && bDisabled) return -1;
+      if (aDisabled && !bDisabled) return 1;
+      return 0;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runtimes, currentUserId]);
+
+  const selectedRuntime =
+    runtimes.find((r) => r.id === selectedRuntimeId) ?? null;
+  const selectedRuntimeLocked =
+    selectedRuntime != null && isRuntimeDisabledForUser(selectedRuntime);
+
+  const getOwnerMember = (ownerId: string | null) => {
+    if (!ownerId) return null;
+    return members.find((m) => m.user_id === ownerId) ?? null;
+  };
+
+  // Query the selected runtime's model catalog so we can tell whether the
+  // runtime supports per-agent model selection at all. Cached by TanStack
+  // Query so ModelDropdown's own subscription reuses the same data.
+  const modelsQuery = useQuery(
+    runtimeModelsOptions(
+      selectedRuntime?.status === "online" ? selectedRuntime.id : null,
+    ),
+  );
+  const modelSupported = modelsQuery.data?.supported ?? true;
+
+  // Use CTA is enabled only when:
+  //   - a runtime is picked and not locked
+  //   - either the runtime doesn't support per-agent model selection
+  //     (model is irrelevant), or the user picked a non-empty model.
+  const modelSatisfied = !modelSupported || model.trim() !== "";
+  const canUse =
+    !creating &&
+    !!selectedRuntime &&
+    !selectedRuntimeLocked &&
+    modelSatisfied;
 
   return (
     <>
@@ -93,7 +183,129 @@ export function TemplateDetail({
             </div>
           </div>
 
-          {/* Skill list — always visible (summary has cached descriptions) */}
+          {/* Runtime + model selectors — required before Use is enabled.
+              Two-column grid so they read as a single configuration row. */}
+          <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
+              <Label className="text-xs text-muted-foreground">
+                {t(($) => $.create_dialog.runtime_label)}
+              </Label>
+              <Popover open={runtimeOpen} onOpenChange={setRuntimeOpen}>
+                <PopoverTrigger
+                  disabled={runtimes.length === 0 && !runtimesLoading}
+                  className="flex w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 mt-1.5 text-left text-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                >
+                  {runtimesLoading ? (
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                  ) : selectedRuntime ? (
+                    <ProviderLogo provider={selectedRuntime.provider} className="h-4 w-4 shrink-0" />
+                  ) : (
+                    <Cloud className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium">
+                        {runtimesLoading
+                          ? t(($) => $.create_dialog.runtime_loading)
+                          : selectedRuntime?.name ?? t(($) => $.create_dialog.runtime_none)}
+                      </span>
+                      {selectedRuntime?.runtime_mode === "cloud" && (
+                        <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-xs font-medium text-info">
+                          {t(($) => $.create_dialog.runtime_cloud_badge)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {selectedRuntime
+                        ? getOwnerMember(selectedRuntime.owner_id)?.name ?? selectedRuntime.device_info
+                        : t(($) => $.create_dialog.runtime_register_first)}
+                    </div>
+                  </div>
+                  <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${runtimeOpen ? "rotate-180" : ""}`} />
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="w-[var(--anchor-width)] p-1 max-h-60 overflow-y-auto"
+                >
+                  {sortedRuntimes.map((device) => {
+                    const ownerMember = getOwnerMember(device.owner_id);
+                    const disabled = isRuntimeDisabledForUser(device);
+                    const disabledTitle = disabled
+                      ? t(($) => $.create_dialog.runtime_private_locked_tooltip)
+                      : undefined;
+                    return (
+                      <button
+                        key={device.id}
+                        type="button"
+                        disabled={disabled}
+                        title={disabledTitle}
+                        onClick={() => {
+                          if (disabled) return;
+                          setSelectedRuntimeId(device.id);
+                          // Picking a new runtime clears the model — the
+                          // catalog (and "supported" flag) changes per
+                          // runtime, so any previously-picked model is
+                          // potentially invalid.
+                          setModel("");
+                          setRuntimeOpen(false);
+                        }}
+                        className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm transition-colors ${
+                          disabled
+                            ? "cursor-not-allowed opacity-50"
+                            : device.id === selectedRuntimeId
+                              ? "bg-accent"
+                              : "hover:bg-accent/50"
+                        }`}
+                      >
+                        <ProviderLogo provider={device.provider} className="h-4 w-4 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate font-medium">{device.name}</span>
+                            {device.runtime_mode === "cloud" && (
+                              <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-xs font-medium text-info">
+                                {t(($) => $.create_dialog.runtime_cloud_badge)}
+                              </span>
+                            )}
+                            {disabled && (
+                              <span className="shrink-0 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                <Lock className="h-3 w-3" />
+                                {t(($) => $.create_dialog.runtime_private_badge)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                            {ownerMember ? (
+                              <>
+                                <ActorAvatar actorType="member" actorId={ownerMember.user_id} size={14} />
+                                <span className="truncate">{ownerMember.name}</span>
+                              </>
+                            ) : (
+                              <span className="truncate">{device.device_info}</span>
+                            )}
+                          </div>
+                        </div>
+                        <span
+                          className={`h-2 w-2 shrink-0 rounded-full ${
+                            device.status === "online" ? "bg-success" : "bg-muted-foreground/40"
+                          }`}
+                        />
+                      </button>
+                    );
+                  })}
+                </PopoverContent>
+              </Popover>
+            </div>
+
+            <ModelDropdown
+              runtimeId={selectedRuntime?.id ?? null}
+              runtimeOnline={selectedRuntime?.status === "online"}
+              value={model}
+              onChange={setModel}
+              disabled={!selectedRuntime}
+            />
+          </section>
+
+          {/* Skill list */}
           <section className="mt-6">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {t(($) => $.create_dialog.template_detail.skill_count, {
@@ -147,12 +359,19 @@ export function TemplateDetail({
         </div>
       </div>
 
-      {/* Sticky CTA footer — click Use kicks off the create API call;
-          parent shows a creating spinner and navigates on success. */}
+      {/* Sticky CTA footer */}
       <div className="flex items-center justify-end gap-2 border-t bg-background px-5 py-3">
         <Button
-          onClick={() => onUse(template)}
-          disabled={creating}
+          onClick={() =>
+            selectedRuntime &&
+            onUse(template, { runtimeId: selectedRuntime.id, model: model.trim() })
+          }
+          disabled={!canUse}
+          title={
+            selectedRuntimeLocked
+              ? t(($) => $.create_dialog.runtime_private_locked_tooltip)
+              : undefined
+          }
           className="gap-1.5"
         >
           {creating ? (

@@ -216,7 +216,6 @@
     "cancel": "取消",
     "create_failed_toast": "创建智能体失败",
     "back_aria": "返回",
-    "no_runtime_toast": "暂无可用运行时。请先添加运行时再试。",
     "template_created_toast": "智能体「{{name}}」已创建",
     "template_created_with_reuse_toast_other": "智能体「{{name}}」已创建。复用了 {{count}} 个现有 skill。",
     "skill_attach_failed_toast": "智能体已创建，但 skill 关联失败：{{error}}",
