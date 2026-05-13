@@ -207,8 +207,10 @@ func TestFormatAssignee(t *testing.T) {
 		state: &actorDisplayLookupState{
 			members:       map[string]string{"abcdefgh-1234": "Alice"},
 			agents:        map[string]string{"xyz": "CodeBot"},
+			squads:        map[string]string{"sq-1": "Super Human"},
 			membersLoaded: true,
 			agentsLoaded:  true,
+			squadsLoaded:  true,
 		},
 	}
 	tests := []struct {
@@ -221,6 +223,7 @@ func TestFormatAssignee(t *testing.T) {
 		{"no id", map[string]any{"assignee_type": "member"}, ""},
 		{"member", map[string]any{"assignee_type": "member", "assignee_id": "abcdefgh-1234"}, "member:Alice"},
 		{"agent", map[string]any{"assignee_type": "agent", "assignee_id": "xyz"}, "agent:CodeBot"},
+		{"squad", map[string]any{"assignee_type": "squad", "assignee_id": "sq-1"}, "squad:Super Human"},
 		{"unknown fallback", map[string]any{"assignee_type": "agent", "assignee_id": "missing"}, "agent:missing"},
 	}
 	for _, tt := range tests {
@@ -572,6 +575,9 @@ func TestResolveAssignee(t *testing.T) {
 	agentsResp := []map[string]any{
 		{"id": "agent-3333", "name": "CodeBot"},
 	}
+	squadsResp := []map[string]any{
+		{"id": "squad-4444", "name": "Super Human"},
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -579,6 +585,8 @@ func TestResolveAssignee(t *testing.T) {
 			json.NewEncoder(w).Encode(membersResp)
 		case "/api/agents":
 			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			json.NewEncoder(w).Encode(squadsResp)
 		default:
 			http.NotFound(w, r)
 		}
@@ -615,6 +623,29 @@ func TestResolveAssignee(t *testing.T) {
 		}
 		if aType != "agent" || aID != "agent-3333" {
 			t.Errorf("got (%q, %q), want (agent, agent-3333)", aType, aID)
+		}
+	})
+
+	// MUL-2165: squad names must resolve to (squad, <id>) so the autopilot
+	// quick-create prompt can route work to a squad (e.g. "Super Human")
+	// instead of falling through to "Unrecognized assignee".
+	t.Run("match squad by exact name", func(t *testing.T) {
+		aType, aID, err := resolveAssignee(ctx, client, "Super Human")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if aType != "squad" || aID != "squad-4444" {
+			t.Errorf("got (%q, %q), want (squad, squad-4444)", aType, aID)
+		}
+	})
+
+	t.Run("match squad by case-insensitive substring", func(t *testing.T) {
+		aType, aID, err := resolveAssignee(ctx, client, "super")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if aType != "squad" || aID != "squad-4444" {
+			t.Errorf("got (%q, %q), want (squad, squad-4444)", aType, aID)
 		}
 	})
 
@@ -661,6 +692,8 @@ func TestResolveAssigneeExactMatchWins(t *testing.T) {
 			json.NewEncoder(w).Encode([]map[string]any{})
 		case "/api/agents":
 			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			json.NewEncoder(w).Encode([]map[string]any{})
 		default:
 			http.NotFound(w, r)
 		}
@@ -724,12 +757,17 @@ func TestResolveAssigneeByID(t *testing.T) {
 		{"id": "f656eab8-1111-1111-1111-111111111111", "name": "reviewer"},
 		{"id": "9b0ff9a2-2222-2222-2222-222222222222", "name": "peer-reviewer"},
 	}
+	squadsResp := []map[string]any{
+		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
 			json.NewEncoder(w).Encode(membersResp)
 		case "/api/agents":
 			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			json.NewEncoder(w).Encode(squadsResp)
 		default:
 			http.NotFound(w, r)
 		}
@@ -792,12 +830,17 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 		{"id": "5fb87ac7-23b5-4a7a-81fa-ed295a54545d", "name": "J"},
 		{"id": "192b9cca-2222-2222-2222-222222222222", "name": "Open Claw - J"},
 	}
+	squadsResp := []map[string]any{
+		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
 			json.NewEncoder(w).Encode(membersResp)
 		case "/api/agents":
 			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			json.NewEncoder(w).Encode(squadsResp)
 		default:
 			http.NotFound(w, r)
 		}
@@ -840,6 +883,19 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 		}
 	})
 
+	// MUL-2165: --assignee-id <squad-uuid> must resolve to (squad, <id>) so
+	// scripts that read the squad list and pin its UUID can assign work to a
+	// squad in a single deterministic call.
+	t.Run("UUID resolves a squad", func(t *testing.T) {
+		aType, aID, err := resolveAssigneeByID(ctx, client, "ccccccc1-2222-3333-4444-555555555555")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if aType != "squad" || aID != "ccccccc1-2222-3333-4444-555555555555" {
+			t.Errorf("got (%q, %q), want squad Super Human", aType, aID)
+		}
+	})
+
 	t.Run("non-UUID input is rejected without name fallback", func(t *testing.T) {
 		_, _, err := resolveAssigneeByID(ctx, client, "Alice")
 		if err == nil {
@@ -862,7 +918,7 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error for missing entity")
 		}
-		if !strings.Contains(err.Error(), "no member or agent") {
+		if !strings.Contains(err.Error(), "no member, agent, or squad") {
 			t.Errorf("expected not-found error, got: %v", err)
 		}
 	})
@@ -893,6 +949,8 @@ func TestPickAssigneeFromFlags(t *testing.T) {
 			json.NewEncoder(w).Encode(membersResp)
 		case "/api/agents":
 			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			json.NewEncoder(w).Encode([]map[string]any{})
 		default:
 			http.NotFound(w, r)
 		}
@@ -1093,6 +1151,9 @@ func TestIssueSubscriberMutationBody(t *testing.T) {
 					return
 				case "/api/agents":
 					json.NewEncoder(w).Encode(tt.agents)
+					return
+				case "/api/squads":
+					json.NewEncoder(w).Encode([]map[string]any{})
 					return
 				}
 				gotPath = r.URL.Path

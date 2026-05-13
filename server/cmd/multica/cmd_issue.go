@@ -113,7 +113,7 @@ var issueUpdateCmd = &cobra.Command{
 
 var issueAssignCmd = &cobra.Command{
 	Use:   "assign <id>",
-	Short: "Assign an issue to a member or agent",
+	Short: "Assign an issue to a member, agent, or squad",
 	Args:  exactArgs(1),
 	RunE:  runIssueAssign,
 }
@@ -242,8 +242,8 @@ func init() {
 	issueListCmd.Flags().Bool("full-id", false, "Show full UUIDs in table output")
 	issueListCmd.Flags().String("status", "", "Filter by status")
 	issueListCmd.Flags().String("priority", "", "Filter by priority")
-	issueListCmd.Flags().String("assignee", "", "Filter by assignee name (member or agent; fuzzy match)")
-	issueListCmd.Flags().String("assignee-id", "", "Filter by assignee UUID (mutually exclusive with --assignee)")
+	issueListCmd.Flags().String("assignee", "", "Filter by assignee name (member, agent, or squad; fuzzy match)")
+	issueListCmd.Flags().String("assignee-id", "", "Filter by assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueListCmd.Flags().String("project", "", "Filter by project ID")
 	issueListCmd.Flags().Int("limit", 50, "Maximum number of issues to return")
 	issueListCmd.Flags().Int("offset", 0, "Number of issues to skip (for pagination)")
@@ -258,8 +258,8 @@ func init() {
 	issueCreateCmd.Flags().String("description-file", "", "Read issue description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes)")
 	issueCreateCmd.Flags().String("status", "", "Issue status")
 	issueCreateCmd.Flags().String("priority", "", "Issue priority")
-	issueCreateCmd.Flags().String("assignee", "", "Assignee name (member or agent; fuzzy match)")
-	issueCreateCmd.Flags().String("assignee-id", "", "Assignee UUID (mutually exclusive with --assignee)")
+	issueCreateCmd.Flags().String("assignee", "", "Assignee name (member, agent, or squad; fuzzy match)")
+	issueCreateCmd.Flags().String("assignee-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueCreateCmd.Flags().String("parent", "", "Parent issue ID")
 	issueCreateCmd.Flags().String("project", "", "Project ID")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (RFC3339 format)")
@@ -273,8 +273,8 @@ func init() {
 	issueUpdateCmd.Flags().String("description-file", "", "Read new description from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes)")
 	issueUpdateCmd.Flags().String("status", "", "New status")
 	issueUpdateCmd.Flags().String("priority", "", "New priority")
-	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member or agent; fuzzy match)")
-	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID (mutually exclusive with --assignee)")
+	issueUpdateCmd.Flags().String("assignee", "", "New assignee name (member, agent, or squad; fuzzy match)")
+	issueUpdateCmd.Flags().String("assignee-id", "", "New assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueUpdateCmd.Flags().String("project", "", "Project ID")
 	issueUpdateCmd.Flags().String("due-date", "", "New due date (RFC3339 format)")
 	issueUpdateCmd.Flags().String("parent", "", "Parent issue ID (use --parent \"\" to clear)")
@@ -284,8 +284,8 @@ func init() {
 	issueStatusCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue assign
-	issueAssignCmd.Flags().String("to", "", "Assignee name (member or agent; fuzzy match)")
-	issueAssignCmd.Flags().String("to-id", "", "Assignee UUID (mutually exclusive with --to)")
+	issueAssignCmd.Flags().String("to", "", "Assignee name (member, agent, or squad; fuzzy match)")
+	issueAssignCmd.Flags().String("to-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --to)")
 	issueAssignCmd.Flags().Bool("unassign", false, "Remove current assignee")
 	issueAssignCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -1325,8 +1325,8 @@ func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) erro
 // ---------------------------------------------------------------------------
 
 type assigneeMatch struct {
-	Type string // "member" or "agent"
-	ID   string // user_id for members, agent id for agents
+	Type string // "member", "agent", or "squad"
+	ID   string // user_id for members, agent id for agents, squad id for squads
 	Name string
 }
 
@@ -1386,9 +1386,26 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string) (s
 		}
 	}
 
-	// If both fetches failed, report the errors instead of a misleading "not found".
-	if len(errs) == 2 {
-		return "", "", fmt.Errorf("failed to resolve assignee: %v; %v", errs[0], errs[1])
+	// Search squads. The platform allows issues to be assigned to a squad
+	// (the leader agent then coordinates delegation), so squad names must
+	// resolve here too — otherwise a user saying "assign to <SquadName>"
+	// silently falls through and the autopilot prompt emits "Unrecognized
+	// assignee: <SquadName>" (MUL-2165).
+	var squads []map[string]any
+	if err := client.GetJSON(ctx, "/api/squads", &squads); err != nil {
+		errs = append(errs, fmt.Errorf("fetch squads: %w", err))
+	} else {
+		for _, s := range squads {
+			if strVal(s, "archived_at") != "" {
+				continue
+			}
+			classify("squad", strVal(s, "id"), strVal(s, "name"))
+		}
+	}
+
+	// If every fetch failed, report the errors instead of a misleading "not found".
+	if len(errs) == 3 {
+		return "", "", fmt.Errorf("failed to resolve assignee: %v; %v; %v", errs[0], errs[1], errs[2])
 	}
 
 	for _, bucket := range [][]assigneeMatch{idMatches, exactMatches, substringMatches} {
@@ -1401,7 +1418,7 @@ func resolveAssignee(ctx context.Context, client *cli.APIClient, name string) (s
 			return "", "", ambiguousAssigneeError(input, bucket)
 		}
 	}
-	return "", "", fmt.Errorf("no member or agent found matching %q", input)
+	return "", "", fmt.Errorf("no member, agent, or squad found matching %q", input)
 }
 
 func ambiguousAssigneeError(input string, matches []assigneeMatch) error {
@@ -1434,8 +1451,11 @@ func resolveAssigneeByID(ctx context.Context, client *cli.APIClient, id string) 
 	agentPath := "/api/agents?" + url.Values{"workspace_id": {client.WorkspaceID}}.Encode()
 	agentErr := client.GetJSON(ctx, agentPath, &agents)
 
-	if memberErr != nil && agentErr != nil {
-		return "", "", fmt.Errorf("failed to resolve assignee: %v; %v", memberErr, agentErr)
+	var squads []map[string]any
+	squadErr := client.GetJSON(ctx, "/api/squads", &squads)
+
+	if memberErr != nil && agentErr != nil && squadErr != nil {
+		return "", "", fmt.Errorf("failed to resolve assignee: %v; %v; %v", memberErr, agentErr, squadErr)
 	}
 
 	for _, m := range members {
@@ -1448,8 +1468,13 @@ func resolveAssigneeByID(ctx context.Context, client *cli.APIClient, id string) 
 			return "agent", strVal(a, "id"), nil
 		}
 	}
+	for _, s := range squads {
+		if strings.EqualFold(strVal(s, "id"), input) {
+			return "squad", strVal(s, "id"), nil
+		}
+	}
 
-	return "", "", fmt.Errorf("no member or agent found with ID %q", input)
+	return "", "", fmt.Errorf("no member, agent, or squad found with ID %q", input)
 }
 
 // pickAssigneeFromFlags reads a (name-flag, id-flag) pair off cmd and resolves
