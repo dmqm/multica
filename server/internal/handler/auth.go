@@ -139,7 +139,7 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 		"sub":   uuidToString(user.ID),
 		"email": user.Email,
 		"name":  user.Name,
-		"exp":   time.Now().Add(30 * 24 * time.Hour).Unix(),
+		"exp":   time.Now().Add(auth.AuthTokenTTL()).Unix(),
 		"iat":   time.Now().Unix(),
 	})
 	return token.SignedString(auth.JWTSecret())
