@@ -613,15 +613,39 @@ WHERE atq.id = @id
   AND NOT EXISTS (SELECT 1 FROM started)
 LIMIT 1;
 
+-- name: RequeueExpiredClaimLeasesForRuntime :many
+-- Preflight self-requeue: when a runtime actively comes to claim, requeue
+-- its own expired leases. This is safe because the runtime proving liveness
+-- by calling ClaimTask. No liveness/heartbeat check needed here.
+WITH expired AS (
+    SELECT atq.id FROM agent_task_queue atq
+    WHERE atq.status = 'dispatched'
+      AND atq.runtime_id = @runtime_id
+      AND atq.claim_expires_at IS NOT NULL
+      AND atq.claim_expires_at < now()
+    ORDER BY atq.claim_expires_at ASC
+    LIMIT @max_per_tick::int
+    FOR UPDATE OF atq SKIP LOCKED
+)
+UPDATE agent_task_queue t
+SET status = 'queued',
+    dispatched_at = NULL,
+    claim_token = NULL,
+    claim_expires_at = NULL
+FROM expired e
+WHERE t.id = e.id
+  AND t.status = 'dispatched'
+  AND t.claim_expires_at IS NOT NULL
+  AND t.claim_expires_at < now()
+RETURNING t.*;
+
 -- name: RequeueExpiredClaimLeases :many
--- Moves dispatched tasks whose claim lease has expired back to 'queued' so
--- they can be re-claimed. Only requeues tasks whose runtime is still online;
--- tasks on offline/dead runtimes stay dispatched so
--- FailTasksForOfflineRuntimes can properly fail+retry them (avoids the
--- 2-hour gap where a requeued task sits in 'queued' but no runtime will
--- claim it). Capped via LIMIT inside the CTE to bound per-tick work.
--- Uses FOR UPDATE SKIP LOCKED to avoid contention with concurrent
--- claim/start operations.
+-- Global backstop: requeues expired claim leases only for runtimes that are
+-- both online AND have a fresh heartbeat (last_seen_at within the stale
+-- threshold). This prevents requeuing tasks to a dead runtime that hasn't
+-- been marked offline yet (the 90s gap between lease expiry at 60s and
+-- offline detection at 150s). Uses FOR UPDATE SKIP LOCKED to avoid
+-- contention with concurrent claim/start operations.
 WITH expired AS (
     SELECT atq.id FROM agent_task_queue atq
     INNER JOIN agent_runtime ar ON ar.id = atq.runtime_id
@@ -629,6 +653,7 @@ WITH expired AS (
       AND atq.claim_expires_at IS NOT NULL
       AND atq.claim_expires_at < now()
       AND ar.status = 'online'
+      AND ar.last_seen_at > now() - make_interval(secs => @stale_threshold_secs::double precision)
     ORDER BY atq.claim_expires_at ASC
     LIMIT @max_per_tick::int
     FOR UPDATE OF atq SKIP LOCKED

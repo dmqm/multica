@@ -865,6 +865,11 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	// expired.
 	preSelectVersion := s.EmptyClaim.CurrentVersion(ctx, runtimeKey)
 
+	// Preflight: requeue this runtime's own expired leases. The runtime
+	// is actively claiming so it's provably alive — safe to requeue
+	// without any heartbeat/liveness check.
+	s.RequeueExpiredClaimLeasesForRuntime(ctx, runtimeID)
+
 	t0 := time.Now()
 	tasks, err := s.Queries.ListQueuedClaimCandidatesByRuntime(ctx, runtimeID)
 	listMs = time.Since(t0).Milliseconds()
@@ -999,9 +1004,10 @@ func startAgentTaskRowToQueue(r db.StartAgentTaskWithClaimTokenRow) db.AgentTask
 
 // RequeueExpiredClaimLeases moves dispatched tasks whose claim lease has
 // expired back to 'queued' and sends wakeup notifications so they can be
-// re-claimed. Returns the number of tasks requeued.
-func (s *TaskService) RequeueExpiredClaimLeases(ctx context.Context) int {
-	requeued, err := s.Queries.RequeueExpiredClaimLeases(ctx, RequeueMaxPerTick)
+// re-claimed. Only requeues tasks whose runtime has a fresh heartbeat
+// (last_seen_at within staleThresholdSecs). Returns the number of tasks requeued.
+func (s *TaskService) RequeueExpiredClaimLeases(ctx context.Context, staleThresholdSecs float64) int {
+	requeued, err := s.Queries.RequeueExpiredClaimLeases(ctx, staleThresholdSecs, RequeueMaxPerTick)
 	if err != nil {
 		slog.Warn("requeue expired claim leases failed", "error", err)
 		return 0
@@ -1010,6 +1016,25 @@ func (s *TaskService) RequeueExpiredClaimLeases(ctx context.Context) int {
 		return 0
 	}
 	slog.Info("requeued expired claim leases", "count", len(requeued))
+	for _, task := range requeued {
+		s.notifyTaskAvailable(task)
+	}
+	return len(requeued)
+}
+
+// RequeueExpiredClaimLeasesForRuntime requeues this runtime's own expired
+// leases as a preflight step before claiming. Safe because the runtime is
+// actively proving liveness by calling ClaimTask.
+func (s *TaskService) RequeueExpiredClaimLeasesForRuntime(ctx context.Context, runtimeID pgtype.UUID) int {
+	requeued, err := s.Queries.RequeueExpiredClaimLeasesForRuntime(ctx, runtimeID, RequeueMaxPerTick)
+	if err != nil {
+		slog.Warn("requeue expired claim leases for runtime failed", "error", err)
+		return 0
+	}
+	if len(requeued) == 0 {
+		return 0
+	}
+	slog.Info("requeued expired claim leases for runtime", "count", len(requeued), "runtime_id", util.UUIDToString(runtimeID))
 	for _, task := range requeued {
 		s.notifyTaskAvailable(task)
 	}

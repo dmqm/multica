@@ -2147,16 +2147,15 @@ func (q *Queries) RefreshAgentStatusFromTasks(ctx context.Context, id pgtype.UUI
 	return i, err
 }
 
-const requeueExpiredClaimLeases = `-- name: RequeueExpiredClaimLeases :many
+const requeueExpiredClaimLeasesForRuntime = `-- name: RequeueExpiredClaimLeasesForRuntime :many
 WITH expired AS (
     SELECT atq.id FROM agent_task_queue atq
-    INNER JOIN agent_runtime ar ON ar.id = atq.runtime_id
     WHERE atq.status = 'dispatched'
+      AND atq.runtime_id = $1
       AND atq.claim_expires_at IS NOT NULL
       AND atq.claim_expires_at < now()
-      AND ar.status = 'online'
     ORDER BY atq.claim_expires_at ASC
-    LIMIT $1::int
+    LIMIT $2::int
     FOR UPDATE OF atq SKIP LOCKED
 )
 UPDATE agent_task_queue t
@@ -2172,16 +2171,89 @@ WHERE t.id = e.id
 RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.claim_token, t.claim_expires_at
 `
 
-// Moves dispatched tasks whose claim lease has expired back to 'queued' so
-// they can be re-claimed. Only requeues tasks whose runtime is still online;
-// tasks on offline/dead runtimes stay dispatched so
-// FailTasksForOfflineRuntimes can properly fail+retry them (avoids the
-// 2-hour gap where a requeued task sits in 'queued' but no runtime will
-// claim it). Capped via LIMIT inside the CTE to bound per-tick work.
-// Uses FOR UPDATE SKIP LOCKED to avoid contention with concurrent
-// claim/start operations.
-func (q *Queries) RequeueExpiredClaimLeases(ctx context.Context, maxPerTick int32) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, requeueExpiredClaimLeases, maxPerTick)
+// Preflight self-requeue: when a runtime actively comes to claim, requeue
+// its own expired leases. This is safe because the runtime proving liveness
+// by calling ClaimTask. No liveness/heartbeat check needed here.
+func (q *Queries) RequeueExpiredClaimLeasesForRuntime(ctx context.Context, runtimeID pgtype.UUID, maxPerTick int32) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, requeueExpiredClaimLeasesForRuntime, runtimeID, maxPerTick)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.ClaimToken,
+			&i.ClaimExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requeueExpiredClaimLeases = `-- name: RequeueExpiredClaimLeases :many
+WITH expired AS (
+    SELECT atq.id FROM agent_task_queue atq
+    INNER JOIN agent_runtime ar ON ar.id = atq.runtime_id
+    WHERE atq.status = 'dispatched'
+      AND atq.claim_expires_at IS NOT NULL
+      AND atq.claim_expires_at < now()
+      AND ar.status = 'online'
+      AND ar.last_seen_at > now() - make_interval(secs => $1::double precision)
+    ORDER BY atq.claim_expires_at ASC
+    LIMIT $2::int
+    FOR UPDATE OF atq SKIP LOCKED
+)
+UPDATE agent_task_queue t
+SET status = 'queued',
+    dispatched_at = NULL,
+    claim_token = NULL,
+    claim_expires_at = NULL
+FROM expired e
+WHERE t.id = e.id
+  AND t.status = 'dispatched'
+  AND t.claim_expires_at IS NOT NULL
+  AND t.claim_expires_at < now()
+RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.claim_token, t.claim_expires_at
+`
+
+// Global backstop: requeues expired claim leases only for runtimes that are
+// both online AND have a fresh heartbeat (last_seen_at within the stale
+// threshold). This prevents requeuing tasks to a dead runtime that hasn't
+// been marked offline yet.
+func (q *Queries) RequeueExpiredClaimLeases(ctx context.Context, staleThresholdSecs float64, maxPerTick int32) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, requeueExpiredClaimLeases, staleThresholdSecs, maxPerTick)
 	if err != nil {
 		return nil, err
 	}
