@@ -6,7 +6,7 @@ import { cn } from "@multica/ui/lib/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { useSidebarOptional } from "@multica/ui/components/ui/sidebar";
 
-function MobileSidebarTrigger() {
+export function MobileSidebarTrigger() {
   const { t } = useTranslation("ui");
   const sidebar = useSidebarOptional();
   // PageHeader is rendered both inside the dashboard shell (where a
