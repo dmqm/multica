@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	AuthCookieName   = "multica_auth"
-	CSRFCookieName   = "multica_csrf"
-	defaultAuthTTL   = 30 * 24 * time.Hour // 30 days
+	AuthCookieName = "multica_auth"
+	CSRFCookieName = "multica_csrf"
+	defaultAuthTTL = 30 * 24 * time.Hour // 30 days
 )
 
 var ipCookieDomainWarnOnce sync.Once
