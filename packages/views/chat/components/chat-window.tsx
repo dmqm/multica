@@ -513,20 +513,23 @@ export function ChatWindow() {
       // render 95% of viewport, leaving the page header visible behind
       // the chat sheet. Listing both keys keeps motion's prop updates
       // self-consistent across the SSR→client transition.
-      initial={isMobile ? { opacity: 0, y: 24, scale: 1 } : { opacity: 0, y: 0, scale: 0.95 }}
+      initial={isMobile ? { opacity: 0, y: 0, scale: 1 } : { opacity: 0, y: 0, scale: 0.95 }}
       animate={
         isMobile
-          ? { opacity: isVisible ? 1 : 0, y: isVisible ? 0 : 24, scale: 1 }
+          ? { opacity: isVisible ? 1 : 0, y: 0, scale: 1 }
           : { opacity: isVisible ? 1 : 0, y: 0, scale: isVisible ? 1 : 0.95 }
       }
-      transition={{
-        layout: isDragging
-          ? { duration: 0 }
-          : { type: "spring", duration: 0.3, bounce: 0 },
-        opacity: { duration: 0.15 },
-        scale: { type: "spring", duration: 0.2, bounce: 0 },
-        y: { type: "spring", duration: 0.25, bounce: 0 },
-      }}
+      transition={
+        isMobile
+          ? { opacity: { duration: 0.2, ease: [0.32, 0.72, 0, 1] } }
+          : {
+              layout: isDragging
+                ? { duration: 0 }
+                : { type: "spring", duration: 0.3, bounce: 0 },
+              opacity: { duration: 0.15 },
+              scale: { type: "spring", duration: 0.2, bounce: 0 },
+            }
+      }
     >
       {!isMobile && !isExpanded && <ChatResizeHandles onDragStart={startDrag} />}
       {/* Header — desktop: ⊕ new + session dropdown | maximize / minimize.
