@@ -63,14 +63,14 @@ import { useChatResize } from "./use-chat-resize";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { createLogger } from "@multica/core/logger";
 import { useNavigation } from "../../navigation";
-import { MobileSidebarTrigger } from "../../layout/page-header";
+import { MobileSidebarTrigger, PageHeader } from "../../layout/page-header";
 import type { Agent, ChatMessage, ChatPendingTask, ChatSession } from "@multica/core/types";
 import { useT } from "../../i18n";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 
-export function ChatWindow() {
+export function ChatWindow({ embedded = false }: { embedded?: boolean }) {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
   const storeIsOpen = useChatStore((s) => s.isOpen);
@@ -498,35 +498,111 @@ export function ChatWindow() {
         pointerEvents: isOpen ? "auto" : "none",
       };
 
+  // --- Shared content (messages / empty state / banners / input) ---
+  const content = (
+    <>
+      {showSkeleton ? (
+        <ChatMessageSkeleton />
+      ) : hasMessages ? (
+        <ChatMessageList
+          messages={messages}
+          pendingTask={pendingTask}
+          availability={availability}
+        />
+      ) : (
+        <EmptyState
+          hasSessions={sessions.length > 0}
+          agentName={activeAgent?.name}
+          onPickPrompt={(text) => handleSend(text)}
+        />
+      )}
+
+      {noAgent ? (
+        <NoAgentBanner />
+      ) : (
+        <OfflineBanner agentName={activeAgent?.name} availability={availability} />
+      )}
+
+      <ChatInput
+        onSend={handleSend}
+        onUploadFile={handleUploadFile}
+        onStop={handleStop}
+        isRunning={!!pendingTaskId}
+        disabled={isSessionArchived}
+        noAgent={noAgent}
+        agentName={activeAgent?.name}
+        topSlot={<ContextAnchorCard />}
+        leftAdornment={
+          <AgentDropdown
+            agents={availableAgents}
+            activeAgent={activeAgent}
+            userId={user?.id}
+            onSelect={handleSelectAgent}
+          />
+        }
+        rightAdornment={<ContextAnchorButton />}
+      />
+    </>
+  );
+
+  // Embedded: ChatWindow is a regular route child inside MobilePageTransition,
+  // peer of Inbox/Issues. No motion.div — AnimatePresence handles enter/exit.
+  // Uses PageHeader so all three pages share the same 48px header chrome.
+  if (embedded) {
+    return (
+      <div className="flex flex-1 flex-col min-h-0 bg-background">
+        <PageHeader className="justify-between gap-2">
+          <div className="flex items-center gap-1 min-w-0">
+            <SessionDropdown
+              sessions={sessions}
+              agents={agents}
+              activeSessionId={activeSessionId}
+              onSelectSession={handleSelectSession}
+            />
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="size-9 text-muted-foreground"
+              onClick={handleNewChat}
+              aria-label={t(($) => $.window.new_chat_tooltip)}
+            >
+              <Plus />
+            </Button>
+          </div>
+        </PageHeader>
+        {content}
+      </div>
+    );
+  }
+
+  // Non-embedded (desktop floating window / mobile absolute sheet): keep
+  // the existing motion.div with position-based container + self-managed
+  // enter/exit animations.
   return (
     <motion.div
       ref={windowRef}
       className={containerClass}
       style={containerStyle}
       layout={isMobile ? false : "position"}
-      // Both axes are tracked in initial / animate regardless of which
-      // branch is active. useIsMobile() returns false during SSR / first
-      // paint and flips true after hydration; if `initial` captured the
-      // desktop scale=0.95 and the mobile-branch `animate` only set y,
-      // the element would stay scaled at 0.95 forever — i.e. inset-0
-      // would compute against the viewport but the resulting box would
-      // render 95% of viewport, leaving the page header visible behind
-      // the chat sheet. Listing both keys keeps motion's prop updates
-      // self-consistent across the SSR→client transition.
-      initial={isMobile ? { opacity: 0, y: 24, scale: 1 } : { opacity: 0, y: 0, scale: 0.95 }}
+      initial={isMobile ? { opacity: 0, y: 0, scale: 1 } : { opacity: 0, y: 0, scale: 0.95 }}
       animate={
         isMobile
-          ? { opacity: isVisible ? 1 : 0, y: isVisible ? 0 : 24, scale: 1 }
+          ? { opacity: isVisible ? 1 : 0, y: 0, scale: 1 }
           : { opacity: isVisible ? 1 : 0, y: 0, scale: isVisible ? 1 : 0.95 }
       }
-      transition={{
-        layout: isDragging
-          ? { duration: 0 }
-          : { type: "spring", duration: 0.3, bounce: 0 },
-        opacity: { duration: 0.15 },
-        scale: { type: "spring", duration: 0.2, bounce: 0 },
-        y: { type: "spring", duration: 0.25, bounce: 0 },
-      }}
+      transition={
+        isMobile
+          ? { opacity: { duration: 0.2, ease: [0.32, 0.72, 0, 1] } }
+          : {
+              layout: isDragging
+                ? { duration: 0 }
+                : { type: "spring", duration: 0.3, bounce: 0 },
+              opacity: { duration: 0.15 },
+              scale: { type: "spring", duration: 0.2, bounce: 0 },
+            }
+      }
     >
       {!isMobile && !isExpanded && <ChatResizeHandles onDragStart={startDrag} />}
       {/* Header — desktop: ⊕ new + session dropdown | maximize / minimize.
@@ -558,18 +634,12 @@ export function ChatWindow() {
           )}
           <SessionDropdown
             sessions={sessions}
-            // Use the full agent list (incl. archived) so historical
-            // sessions can still resolve their avatar.
             agents={agents}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {/* Mobile-only ⊕ — moved here from the left so the hamburger can
-           *  occupy the same slot the rest of the mobile app uses. Sized
-           *  like the Issues page's mobile + (size-9, muted ghost) so the
-           *  two pages read as the same affordance. */}
           {isMobile && (
             <Button
               variant="ghost"
@@ -581,9 +651,6 @@ export function ChatWindow() {
               <Plus />
             </Button>
           )}
-          {/* The maximize toggle is meaningless on mobile — the sheet is
-           *  always full-screen, there is no smaller "windowed" form to
-           *  restore to. Hiding it removes a confusing no-op button. */}
           {!isMobile && (
             <Tooltip>
               <TooltipTrigger
@@ -603,12 +670,6 @@ export function ChatWindow() {
               </TooltipContent>
             </Tooltip>
           )}
-          {/* Mobile leaves chat by tapping Inbox / Issues in the bottom
-           *  nav — the route change naturally hides the chat surface. We
-           *  drop the dedicated minimize button there so the header never
-           *  hints at a "minimize" gesture, which prior feedback called
-           *  out as confusing (clicking the chat tab a second time to
-           *  toggle was being read as a hidden minimize). */}
           {!isMobile && (
             <Tooltip>
               <TooltipTrigger
@@ -628,60 +689,7 @@ export function ChatWindow() {
           )}
         </div>
       </div>
-
-      {/* Messages / skeleton / empty state */}
-      {showSkeleton ? (
-        <ChatMessageSkeleton />
-      ) : hasMessages ? (
-        <ChatMessageList
-          messages={messages}
-          pendingTask={pendingTask}
-          availability={availability}
-        />
-      ) : (
-        <EmptyState
-          hasSessions={sessions.length > 0}
-          agentName={activeAgent?.name}
-          onPickPrompt={(text) => handleSend(text)}
-        />
-      )}
-
-      {/* Status banner above the input — single mutually-exclusive slot.
-       *  Priority: no-agent > offline / unstable. Agent presence is the
-       *  hard prerequisite (you can't send anything without one), so it
-       *  always wins over a presence hint. ContextAnchorCard stays in
-       *  topSlot because that's per-message context, not session state.
-       *
-       *  We key off `noAgent` (the resolved-empty state) rather than
-       *  `!activeAgent`, so the loading window between mount and the
-       *  first agent-list response stays banner-free. */}
-      {noAgent ? (
-        <NoAgentBanner />
-      ) : (
-        <OfflineBanner agentName={activeAgent?.name} availability={availability} />
-      )}
-
-      {/* Input — disabled for legacy archived sessions; locked out entirely
-       *  when there's no agent (the EmptyState above carries the CTA). */}
-      <ChatInput
-        onSend={handleSend}
-        onUploadFile={handleUploadFile}
-        onStop={handleStop}
-        isRunning={!!pendingTaskId}
-        disabled={isSessionArchived}
-        noAgent={noAgent}
-        agentName={activeAgent?.name}
-        topSlot={<ContextAnchorCard />}
-        leftAdornment={
-          <AgentDropdown
-            agents={availableAgents}
-            activeAgent={activeAgent}
-            userId={user?.id}
-            onSelect={handleSelectAgent}
-          />
-        }
-        rightAdornment={<ContextAnchorButton />}
-      />
+      {content}
     </motion.div>
   );
 }

@@ -10,12 +10,20 @@ import { useNavigation } from "../navigation";
 // iOS-style slide rather than a hard cut. Desktop renders children directly.
 //
 // Two transition shapes:
-// - Sibling tab swap (e.g. Inbox -> Issues): cross-fade with a small vertical
-//   nudge — no horizontal direction is meaningful between unrelated tops.
+// - Sibling tab swap (e.g. Inbox -> Issues): cross-fade — no horizontal
+//   direction is meaningful between unrelated tops.
 // - Drill / pop (entering or leaving a detail page): slide horizontally,
 //   right-to-left for push, left-to-right for back. We detect drill by
 //   comparing current depth to the previous pathname's depth: deeper means
 //   push, shallower means pop, equal means tab swap.
+//
+// Mobile: ChatPage renders ChatWindow (embedded) as a peer of Inbox/Issues
+// inside AnimatePresence. The dashboard layout hides the `extra`-slot
+// ChatWindow on mobile so there's only one Chat instance. Desktop keeps
+// the floating-window ChatWindow in `extra` — ChatPage returns null there.
+//
+// All three pages share popLayout cross-fade: tab swap with pure opacity
+// at 150ms, push/pop at 200ms with the iOS sheet easing curve.
 //
 // pathname can be "" before NavigationAdapter mounts; skip animating the
 // empty key so the very first render doesn't flash.
@@ -44,31 +52,40 @@ export function MobilePageTransition({ children }: { children: ReactNode }) {
   // iOS uses ~50% screen translate; we use 24px because cross-fade does most
   // of the lift and a full slide on a single mounted element would feel
   // heavier than the hardware can keep up with under a route transition.
+  //
+  // Tab swap uses pure opacity fade — no spatial offset — so adjacent tabs
+  // feel like peers fading in/out together rather than pages sliding past
+  // each other.
   const initial =
     direction === "push"
       ? { opacity: 0, x: 24, y: 0 }
       : direction === "pop"
         ? { opacity: 0, x: -24, y: 0 }
-        : { opacity: 0, x: 0, y: 8 };
+        : { opacity: 0, x: 0, y: 0 };
   const exit =
     direction === "push"
       ? { opacity: 0, x: -16, y: 0 }
       : direction === "pop"
         ? { opacity: 0, x: 16, y: 0 }
-        : { opacity: 0, x: 0, y: -6 };
+        : { opacity: 0, x: 0, y: 0 };
+
+  // mode="popLayout" runs exit + enter in parallel (vs "wait" which runs
+  // them sequentially, creating a blank gap). Tab swaps get 150ms so the
+  // bar feels instantly responsive; push/pop get 200ms with the iOS sheet
+  // easing curve for a natural slide.
+  const duration = direction === "swap" ? 0.15 : 0.2;
+  const ease: [number, number, number, number] =
+    direction === "swap" ? [0.4, 0, 0.2, 1] : [0.32, 0.72, 0, 1];
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
+    <AnimatePresence mode="popLayout" initial={false}>
       <motion.div
         key={pathname || "_init"}
         initial={initial}
         animate={{ opacity: 1, x: 0, y: 0 }}
         exit={exit}
-        // 260ms with iOS-style decel curve — enough to feel intentional
-        // without slowing tab swaps to a crawl. cubic-bezier(0.32, 0.72, 0, 1)
-        // is the same easing the system uses for sheet present/dismiss.
-        transition={{ duration: 0.26, ease: [0.32, 0.72, 0, 1] }}
-        className="flex flex-1 min-h-0 flex-col will-change-transform"
+        transition={{ duration, ease }}
+        className="flex flex-1 min-h-0 flex-col transform-gpu"
       >
         {children}
       </motion.div>
