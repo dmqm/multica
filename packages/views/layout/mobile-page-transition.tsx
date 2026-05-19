@@ -4,24 +4,27 @@ import { useRef, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useNavigation } from "../navigation";
-import { useWorkspaceSlug, paths } from "@multica/core/paths";
 
 // Mobile-only route transition. Wraps DashboardLayout's main content area
 // in AnimatePresence keyed by pathname so that route changes produce an
 // iOS-style slide rather than a hard cut. Desktop renders children directly.
 //
 // Two transition shapes:
-// - Sibling tab swap (e.g. Inbox -> Issues): cross-fade with a small vertical
-//   nudge — no horizontal direction is meaningful between unrelated tops.
+// - Sibling tab swap (e.g. Inbox -> Issues): cross-fade — no horizontal
+//   direction is meaningful between unrelated tops.
 // - Drill / pop (entering or leaving a detail page): slide horizontally,
 //   right-to-left for push, left-to-right for back. We detect drill by
 //   comparing current depth to the previous pathname's depth: deeper means
 //   push, shallower means pop, equal means tab swap.
 //
-// Chat route is special — ChatPage renders null (the real ChatWindow lives
-// in the dashboard layout's `extra` slot and manages its own enter/exit
-// animation). Running AnimatePresence on a null element produces a blank
-// gap during tab switches. We skip the wrapper entirely on chat routes.
+// ChatPage renders null — ChatWindow (in the dashboard layout's `extra`
+// slot) manages its own entrance/exit via its own motion.div animate prop.
+// We keep AnimatePresence active so the previous page (Inbox/Issues) always
+// gets a proper exit animation — skipping the wrapper would un-mount the
+// old page instantly with no transition, which is the "flash" users see.
+// ChatPage entering as null is harmless: popLayout makes the exit element
+// absolute-positioned, it fades out while ChatWindow slides in from the
+// extra slot.
 //
 // pathname can be "" before NavigationAdapter mounts; skip animating the
 // empty key so the very first render doesn't flash.
@@ -36,16 +39,8 @@ export function MobilePageTransition({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
   const { pathname } = useNavigation();
   const prevRef = useRef(pathname);
-  const slug = useWorkspaceSlug();
 
   if (!isMobile) return <>{children}</>;
-
-  // ChatPage renders null — ChatWindow in the `extra` slot owns its own
-  // animation. Wrapping null in AnimatePresence produces an empty gap
-  // during Inbox/Issues ↔ Chat tab switches.
-  const chatPath = slug ? paths.workspace(slug).chat() : null;
-  const isChatRoute = !!chatPath && pathname === chatPath;
-  if (isChatRoute) return <>{children}</>;
 
   const prev = prevRef.current;
   prevRef.current = pathname;
