@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { SidebarProvider, SidebarInset } from "@multica/ui/components/ui/sidebar";
+import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { ModalRegistry } from "../modals/registry";
 import { AppSidebar } from "./app-sidebar";
 import { DashboardGuard } from "./dashboard-guard";
@@ -26,6 +27,7 @@ export function DashboardLayout({
   searchSlot,
   loadingIndicator,
 }: DashboardLayoutProps) {
+  const isMobile = useIsMobile();
   return (
     <DashboardGuard
       loadingFallback={
@@ -37,15 +39,13 @@ export function DashboardLayout({
       <SidebarProvider className="h-svh">
         <WorkspacePresencePrefetch />
         <AppSidebar searchSlot={searchSlot} />
-        {/* Mobile bottom nav adds ~3.25rem of fixed-position chrome at the
-         * viewport bottom (md:hidden); pad SidebarInset on mobile so
-         * content/scrollers don't disappear under it. env(safe-area-inset-bottom)
-         * accounts for the iOS home indicator in standalone PWA mode. */}
         <SidebarInset className="relative overflow-hidden pb-[calc(3.25rem+env(safe-area-inset-bottom))] md:pb-0">
           <NavigationProgress />
           <MobilePageTransition>{children}</MobilePageTransition>
           <ModalRegistry />
-          {extra}
+          {/* Mobile: ChatPage renders ChatWindow as a route child, peer of
+           *  Inbox/Issues inside AnimatePresence — no extra-slot overlay. */}
+          {!isMobile && extra}
           <MobileBottomNav />
         </SidebarInset>
       </SidebarProvider>

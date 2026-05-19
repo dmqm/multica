@@ -17,14 +17,13 @@ import { useNavigation } from "../navigation";
 //   comparing current depth to the previous pathname's depth: deeper means
 //   push, shallower means pop, equal means tab swap.
 //
-// ChatPage renders null — ChatWindow (in the dashboard layout's `extra`
-// slot) manages its own entrance/exit via its own motion.div animate prop.
-// We keep AnimatePresence active so the previous page (Inbox/Issues) always
-// gets a proper exit animation — skipping the wrapper would un-mount the
-// old page instantly with no transition, which is the "flash" users see.
-// ChatPage entering as null is harmless: popLayout makes the exit element
-// absolute-positioned, it fades out while ChatWindow slides in from the
-// extra slot.
+// Mobile: ChatPage renders ChatWindow (embedded) as a peer of Inbox/Issues
+// inside AnimatePresence. The dashboard layout hides the `extra`-slot
+// ChatWindow on mobile so there's only one Chat instance. Desktop keeps
+// the floating-window ChatWindow in `extra` — ChatPage returns null there.
+//
+// All three pages share popLayout cross-fade: tab swap with pure opacity
+// at 150ms, push/pop at 200ms with the iOS sheet easing curve.
 //
 // pathname can be "" before NavigationAdapter mounts; skip animating the
 // empty key so the very first render doesn't flash.
