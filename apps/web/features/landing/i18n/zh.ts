@@ -285,6 +285,58 @@ export function createZhDict(allowSignup: boolean): LandingDict {
     },
     entries: [
       {
+        version: "0.3.3",
+        date: "2026-05-19",
+        title: "项目时间线、运行环境设置与更清晰的任务协作",
+        changes: [],
+        features: [
+          "项目现在提供甘特图视图，用于查看有排期的工作，并会在计划变化时实时同步",
+          "Workspace 管理员可以在设置中调整 Issue 编号前缀",
+          "命令行可以切换 workspace 并查看当前 workspace",
+          "Agent 现在可以优先读取最新的 Issue 讨论线程，后续跟进和审查更贴近当前上下文",
+          "Usage 新增 1 天视图和按周趋势，并会遵循所选时区",
+          "Agent 详情页现在是对应智能体的 Issue 看板",
+        ],
+        improvements: [
+          "Onboarding 改为一次回答一个问题，并能用更少步骤引导 runtime 设置",
+          "My Issues 会包含分配给小队的工作，相关标签也更容易理解",
+          "查看智能体执行日志时可以切换排序方向，回看运行过程更方便",
+        ],
+        fixes: [
+          "桌面端打开 HTML 预览更稳定，必要时会关闭全屏窗口，并支持页面内链接跳转",
+          "HTML 源码视图和附件预览更容易检查，也可以把内容打开到新标签页",
+          "切换创建 Issue 模式时，提示词里不再残留旧的手写草稿",
+          "Runtime 任务会从任务目录读取正确的 workspace 指令和 skills",
+          "自托管团队可以设置登录会话有效期",
+        ],
+      },
+      {
+        version: "0.3.2",
+        date: "2026-05-18",
+        title: "Webhook 自动任务、更清晰的工作看板与更稳的运行环境",
+        changes: [],
+        features: [
+          "Autopilot 现在可以由 webhook 事件触发，并能查看投递记录，在外部系统需要时重新投递一次",
+          "Issue 看板支持按负责人分组，展示关联 Pull Request 状态，并加入开始日期，排期更清楚",
+          "Runtime 页面升级了机器视图，并在用量图表中加入时间和任务趋势",
+          "Skills 支持从本地 runtime 批量复制到 workspace，团队初始化更快",
+          "HTML 附件和 HTML 代码块可以直接在 Issue 讨论中预览",
+        ],
+        improvements: [
+          "Issue 操作失败时会显示更明确的错误原因，团队不用翻日志也能理解发生了什么",
+          "关联 GitHub 的 Pull Request 会在 Multica 内展示 CI 和合并冲突状态",
+          "自托管部署获得更安全的默认配置，并补充反向代理、登录限制和本地服务的说明",
+          "搜索结果排序更准确，也会展示更有帮助的摘要片段",
+        ],
+        fixes: [
+          "Autopilot 创建 Issue 时可以稳定重复触发，并正确归属到负责的 assignee agent",
+          "Runtime 设置默认优先选择本地机器，机器列表中的名称也更清晰",
+          "Squad 页面可以正常滚动，并能看到成员当前是否已经在处理工作",
+          "桌面端缩放快捷键在常见组合下恢复正常",
+          "登录、安全补丁和本地服务配置更新，让托管版和自托管部署都更安全",
+        ],
+      },
+      {
         version: "0.3.1",
         date: "2026-05-15",
         title: "更快的导航、后台更新与更可靠的小队协作",

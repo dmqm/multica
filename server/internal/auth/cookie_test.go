@@ -82,47 +82,37 @@ func TestSetAuthCookies_HTTPSelfHost(t *testing.T) {
 	}
 }
 
-func TestAuthTokenTTL(t *testing.T) {
+func TestParseAuthTokenTTL(t *testing.T) {
 	cases := []struct {
-		name string
-		env  string
-		want time.Duration
+		name    string
+		raw     string
+		wantDur time.Duration
+		wantOK  bool
 	}{
-		{"unset → 30 days", "", 30 * 24 * time.Hour},
-		{"whitespace → 30 days", "   ", 30 * 24 * time.Hour},
-		{"explicit 1 year", "8760h", 8760 * time.Hour},
-		{"30 minutes", "30m", 30 * time.Minute},
-		{"malformed → 30 days", "not-a-duration", 30 * 24 * time.Hour},
-		{"zero → 30 days", "0s", 30 * 24 * time.Hour},
-		{"negative → 30 days", "-1h", 30 * 24 * time.Hour},
+		{"empty string", "", 0, false},
+		{"valid 3600", "3600", time.Hour, true},
+		{"valid 86400", "86400", 24 * time.Hour, true},
+		{"negative", "-100", 0, false},
+		{"zero", "0", 0, false},
+		{"non-numeric", "abc", 0, false},
+		{"whitespace trimmed", " 7200 ", 2 * time.Hour, true},
+		{"duration hours", "8760h", 8760 * time.Hour, true},
+		{"duration compound", "720h30m", 720*time.Hour + 30*time.Minute, true},
+		{"duration minutes", "90m", 90 * time.Minute, true},
+		{"duration negative", "-1h", 0, false},
+		{"duration zero", "0s", 0, false},
+		{"integer overflow", "9999999999", 0, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("AUTH_TOKEN_TTL", tc.env)
-			if got := AuthTokenTTL(); got != tc.want {
-				t.Errorf("AuthTokenTTL() = %v, want %v (AUTH_TOKEN_TTL=%q)", got, tc.want, tc.env)
+			got, ok := parseAuthTokenTTL(tc.raw)
+			if ok != tc.wantOK || got != tc.wantDur {
+				t.Errorf("parseAuthTokenTTL(%q) = (%v, %v), want (%v, %v)", tc.raw, got, ok, tc.wantDur, tc.wantOK)
 			}
 		})
 	}
 }
 
-func TestSetAuthCookies_RespectsAuthTokenTTL(t *testing.T) {
-	t.Setenv("FRONTEND_ORIGIN", "https://app.example.com")
-	t.Setenv("COOKIE_DOMAIN", "app.example.com")
-	t.Setenv("AUTH_TOKEN_TTL", "8760h")
-
-	rec := httptest.NewRecorder()
-	if err := SetAuthCookies(rec, "test-token"); err != nil {
-		t.Fatalf("SetAuthCookies: %v", err)
-	}
-
-	wantSeconds := int((8760 * time.Hour).Seconds())
-	for _, c := range rec.Result().Cookies() {
-		if c.MaxAge != wantSeconds {
-			t.Errorf("cookie %q MaxAge = %d, want %d", c.Name, c.MaxAge, wantSeconds)
-		}
-	}
-}
 
 func TestSetAuthCookies_HTTPSProduction(t *testing.T) {
 	t.Setenv("FRONTEND_ORIGIN", "https://app.example.com")

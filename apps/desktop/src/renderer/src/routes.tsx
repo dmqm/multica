@@ -13,6 +13,7 @@ import { SkillDetailPage } from "./pages/skill-detail-page";
 import { AgentDetailPage } from "./pages/agent-detail-page";
 import { MemberDetailPage } from "./pages/member-detail-page";
 import { RuntimeDetailPage } from "./pages/runtime-detail-page";
+import { AttachmentPreviewRoute } from "./pages/attachment-preview-page";
 import { IssuesPage } from "@multica/views/issues/components";
 import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
@@ -166,6 +167,11 @@ export const appRoutes: RouteObject[] = [
           // and redirects back to /issues, so a tab landed here resolves
           // itself rather than 404'ing.
           { path: "chat", element: <ChatPage />, handle: { title: "Chat" } },
+          {
+            path: "attachments/:id/preview",
+            element: <AttachmentPreviewRoute />,
+            handle: { title: "Attachment" },
+          },
           {
             path: "usage",
             element: <DashboardPage />,
