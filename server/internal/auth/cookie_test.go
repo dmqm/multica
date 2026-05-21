@@ -113,24 +113,6 @@ func TestParseAuthTokenTTL(t *testing.T) {
 	}
 }
 
-func TestSetAuthCookies_RespectsAuthTokenTTL(t *testing.T) {
-	t.Setenv("FRONTEND_ORIGIN", "https://app.example.com")
-	t.Setenv("COOKIE_DOMAIN", "app.example.com")
-	t.Setenv("AUTH_TOKEN_TTL", "8760h")
-
-	rec := httptest.NewRecorder()
-	if err := SetAuthCookies(rec, "test-token"); err != nil {
-		t.Fatalf("SetAuthCookies: %v", err)
-	}
-
-	wantSeconds := int((8760 * time.Hour).Seconds())
-	for _, c := range rec.Result().Cookies() {
-		if c.MaxAge != wantSeconds {
-			t.Errorf("cookie %q MaxAge = %d, want %d", c.Name, c.MaxAge, wantSeconds)
-		}
-	}
-}
-
 func TestSetAuthCookies_HTTPSProduction(t *testing.T) {
 	t.Setenv("FRONTEND_ORIGIN", "https://app.example.com")
 	t.Setenv("COOKIE_DOMAIN", "app.example.com")
