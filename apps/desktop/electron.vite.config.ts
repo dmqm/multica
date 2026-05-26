@@ -9,12 +9,17 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve("src/preload/index.ts"),
+          tray: resolve("src/preload/tray.ts"),
+        },
+      },
+    },
   },
   renderer: {
     server: {
-      // Allow parallel worktrees to run `pnpm dev:desktop` side-by-side
-      // (e.g. Multica Canary alongside a primary checkout) by overriding
-      // the renderer port via env. Falls back to 5173 for the common case.
       port: Number(process.env.DESKTOP_RENDERER_PORT) || 5173,
       strictPort: true,
     },
@@ -24,6 +29,14 @@ export default defineConfig({
         "@": resolve("src/renderer/src"),
       },
       dedupe: ["react", "react-dom"],
+    },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve("src/renderer/src/index.html"),
+          tray: resolve("src/renderer/src/tray/index.html"),
+        },
+      },
     },
   },
 });

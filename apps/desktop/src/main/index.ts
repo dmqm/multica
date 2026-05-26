@@ -10,6 +10,7 @@ import { installContextMenu } from "./context-menu";
 import { getAppVersion } from "./app-version";
 import { loadRuntimeConfig } from "./runtime-config-loader";
 import type { RuntimeConfigResult } from "../shared/runtime-config";
+import { startTray, destroyTray } from "./tray";
 
 // Bundled icon used for dock/taskbar branding. macOS/Windows production
 // builds let the OS pick up the icon from the .app bundle / .exe resources,
@@ -52,6 +53,7 @@ if (process.platform !== "win32") {
 }
 
 const PROTOCOL = "multica";
+const IS_TRAY_ONLY = process.argv.includes("--tray-only");
 
 let mainWindow: BrowserWindow | null = null;
 let runtimeConfigResult: RuntimeConfigResult = {
@@ -274,6 +276,12 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(async () => {
+    if (IS_TRAY_ONLY) {
+      electronApp.setAppUserModelId("ai.multica.desktop");
+      await startTray();
+      return;
+    }
+
     const viteEnv = import.meta.env as ImportMetaEnv & {
       readonly VITE_API_URL?: string;
       readonly VITE_WS_URL?: string;
@@ -437,5 +445,6 @@ if (!gotTheLock) {
 }
 
 app.on("window-all-closed", () => {
+  if (IS_TRAY_ONLY) return;
   if (process.platform !== "darwin") app.quit();
 });
