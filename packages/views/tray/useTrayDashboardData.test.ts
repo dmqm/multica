@@ -438,4 +438,34 @@ describe("useTrayDashboardData", () => {
       expect(mocks.listInbox.mock.calls.length).toBeGreaterThan(initialCalls);
     });
   });
+
+  it("does not fetch issues when userId is empty string", async () => {
+    // Block regression test: empty userId must disable the issues query
+    // because listing issues without a real assignee fetches a wrong
+    // (or empty) result set and breaks the data-flow.
+    const { result } = renderHook(
+      () => useTrayDashboardData({ wsId: "ws-1", userId: "", ws: mockWs as never }),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() => {
+      expect(result.current.unreadCount).toBe(0);
+    });
+
+    // issuesQuery must not fire when userId is empty
+    expect(mocks.listIssues).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch issues when userId is null", async () => {
+    const { result } = renderHook(
+      () => useTrayDashboardData({ wsId: "ws-1", userId: null, ws: mockWs as never }),
+      { wrapper: createWrapper(queryClient) },
+    );
+
+    await waitFor(() => {
+      expect(result.current.unreadCount).toBe(0);
+    });
+
+    expect(mocks.listIssues).not.toHaveBeenCalled();
+  });
 });

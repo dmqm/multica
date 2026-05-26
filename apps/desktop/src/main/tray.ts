@@ -61,6 +61,28 @@ function getOS(): string {
   return p === "darwin" ? "macos" : p === "win32" ? "windows" : p;
 }
 
+async function fetchUserId(apiUrl: string, token: string): Promise<string> {
+  try {
+    const res = await fetch(`${apiUrl}/api/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      console.warn("[tray] GET /api/me returned", res.status, "- userId unavailable");
+      return "";
+    }
+    const user = (await res.json()) as { id: string };
+    if (!user?.id) {
+      console.warn("[tray] GET /api/me returned no id - userId unavailable");
+      return "";
+    }
+    console.info("[tray] resolved userId:", user.id);
+    return user.id;
+  } catch (err) {
+    console.warn("[tray] GET /api/me failed:", String(err), "- userId unavailable (offline?)");
+    return "";
+  }
+}
+
 export async function startTray(): Promise<void> {
   const cliConfig = readCLIConfig();
   if (!cliConfig?.token || !cliConfig?.workspace_id) {
@@ -93,13 +115,15 @@ export async function startTray(): Promise<void> {
         schemaVersion: 1 as const,
       };
 
+  const userId = await fetchUserId(config.apiUrl, cliConfig.token);
+
   trayConfig = {
     apiUrl: config.apiUrl,
     wsUrl: config.wsUrl,
     appUrl: config.appUrl,
     token: cliConfig.token,
     workspaceId: cliConfig.workspace_id,
-    userId: "",
+    userId,
     appVersion: getAppVersion(),
     os: getOS(),
   };
@@ -119,6 +143,10 @@ export async function startTray(): Promise<void> {
   tray = new Tray(trayIcon);
   tray.setToolTip("Multica");
 
+  // macOS uses tray.setTitle() for the unread badge count. Windows does not
+  // support tray titles, so badge state degrades to a tooltip update —
+  // "Multica · N unread". This is a known/declared limitation: the tray-app
+  // targets macOS first; Windows badge UX is deferred to v2.
   if (process.platform === "darwin") {
     tray.setTitle("");
   }
@@ -133,7 +161,11 @@ export async function startTray(): Promise<void> {
 
   createTrayWindow();
 
-  setupAutoStart();
+  // setupAutoStart() is NOT called here by default. The tray app must
+  // respect the user's login-item preference; silently opting in via
+  // app.setLoginItemSettings is wrong. When onboarding is implemented,
+  // this can be exposed as an IPC toggle that the renderer invokes after
+  // explicit user consent.
 }
 
 function createTrayWindow(): void {
@@ -151,6 +183,10 @@ function createTrayWindow(): void {
     webPreferences: {
       preload: pathJoin(__dirname, "../preload/tray.js"),
       sandbox: false,
+      // webSecurity: false is required because the tray window loads
+      // assets from a file:// origin and needs to reach external API
+      // servers (CORS). The renderer runs with contextIsolation: true,
+      // and the preload script explicitly gatekeeps IPC channels.
       webSecurity: false,
       contextIsolation: true,
     },
@@ -271,6 +307,18 @@ function setupAutoStart(): void {
     args: ["--tray-only"],
   });
 }
+
+export function disableAutoStart(): void {
+  app.setLoginItemSettings({ openAtLogin: false });
+}
+
+ipcMain.on("tray:set-auto-start", (_event, enabled: boolean) => {
+  if (enabled) {
+    setupAutoStart();
+  } else {
+    disableAutoStart();
+  }
+});
 
 export function destroyTray(): void {
   if (trayWindow) {
