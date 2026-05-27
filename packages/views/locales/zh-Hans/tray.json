@@ -1,0 +1,8 @@
+{
+  "empty": {
+    "unread_mentions": "暂无未读提及",
+    "active_issues": "暂无活跃 issue",
+    "running_tasks": "暂无运行中的 task"
+  },
+  "task_label": "Task {{id}}"
+}

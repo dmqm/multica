@@ -2,6 +2,7 @@
 
 import React from "react";
 import type { InboxItem } from "@multica/core/types";
+import { useT } from "../i18n";
 import type { TrayIssue, TrayTask } from "./useTrayDashboardData";
 
 export interface TrayDashboardProps {
@@ -12,6 +13,7 @@ export interface TrayDashboardProps {
 }
 
 export function TrayDashboard({ unreadCount, unreadItems, issues, tasks }: TrayDashboardProps) {
+  const { t } = useT("tray");
   return (
     <div
       style={{
@@ -34,6 +36,7 @@ export function TrayDashboard({ unreadCount, unreadItems, issues, tasks }: TrayD
           justifyContent: "space-between",
         }}
       >
+{/* eslint-disable-next-line i18next/no-literal-string -- brand name, not translatable */}
         <span style={{ fontWeight: 600 }}>Multica</span>
         {unreadCount > 0 && (
           <span
@@ -53,7 +56,7 @@ export function TrayDashboard({ unreadCount, unreadItems, issues, tasks }: TrayD
 
       <Section title="Unread mentions" count={unreadItems.length}>
         {unreadItems.length === 0 ? (
-          <EmptyMessage>No unread mentions</EmptyMessage>
+          <EmptyMessage>{t(($) => $.empty.unread_mentions)}</EmptyMessage>
         ) : (
           unreadItems.map((item) => (
             <InboxRow key={item.id} item={item} />
@@ -63,7 +66,7 @@ export function TrayDashboard({ unreadCount, unreadItems, issues, tasks }: TrayD
 
       <Section title="My active issues" count={issues.length}>
         {issues.length === 0 ? (
-          <EmptyMessage>No active issues</EmptyMessage>
+          <EmptyMessage>{t(($) => $.empty.active_issues)}</EmptyMessage>
         ) : (
           issues.map((issue) => (
             <IssueRow key={issue.id} issue={issue} />
@@ -73,7 +76,7 @@ export function TrayDashboard({ unreadCount, unreadItems, issues, tasks }: TrayD
 
       <Section title="Running agent tasks" count={tasks.length}>
         {tasks.length === 0 ? (
-          <EmptyMessage>No running tasks</EmptyMessage>
+          <EmptyMessage>{t(($) => $.empty.running_tasks)}</EmptyMessage>
         ) : (
           tasks.map((task) => (
             <TaskRow key={task.id} task={task} />
@@ -222,6 +225,7 @@ function IssueRow({ issue }: { issue: TrayIssue }) {
 }
 
 function TaskRow({ task }: { task: TrayTask }) {
+  const { t } = useT("tray");
   const statusColor =
     task.status === "running" ? "#22c55e" : task.status === "queued" ? "#f59e0b" : "#6b7280";
   const statusLabel =
@@ -257,7 +261,7 @@ function TaskRow({ task }: { task: TrayTask }) {
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
           }}>
-          Task {task.id.slice(0, 8)}
+          {t(($) => $.task_label, { id: task.id.slice(0, 8) })}
         </span>
         <span
           style={{

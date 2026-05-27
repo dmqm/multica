@@ -1,0 +1,8 @@
+{
+  "empty": {
+    "unread_mentions": "No unread mentions",
+    "active_issues": "No active issues",
+    "running_tasks": "No running tasks"
+  },
+  "task_label": "Task {{id}}"
+}
