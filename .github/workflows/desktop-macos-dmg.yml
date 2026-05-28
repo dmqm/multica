@@ -1,0 +1,109 @@
+name: macOS Desktop DMG (Native)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: "Release tag to upload the DMG to"
+        required: true
+        default: "tray-app-preview-20260528-1009"
+        type: string
+      arch:
+        description: "Target architecture"
+        required: false
+        default: "arm64"
+        type: choice
+        options:
+          - arm64
+          - x64
+
+permissions:
+  contents: write
+
+jobs:
+  macos-dmg:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build macOS DMG
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_FOR_PULL_REQUEST: "false"
+        run: node scripts/package.mjs --mac --${{ inputs.arch }} --publish never
+
+      - name: Locate built artifacts
+        id: artifacts
+        run: |
+          DMG=$(find apps/desktop/dist -maxdepth 1 -name "*.dmg" | head -1)
+          ZIP=$(find apps/desktop/dist -maxdepth 1 -name "*.zip" | head -1)
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Verify DMG is a valid macOS disk image
+        run: |
+          DMG="${{ steps.artifacts.outputs.dmg }}"
+          echo "=== DMG file info ==="
+          echo "Path: $DMG"
+          ls -lh "$DMG"
+          echo ""
+
+          echo "=== hdiutil verify ==="
+          hdiutil verify "$DMG"
+          echo ""
+
+          echo "=== hdiutil imageinfo (top 25 lines) ==="
+          hdiutil imageinfo "$DMG" 2>/dev/null | head -25
+
+      - name: Upload DMG as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: multica-desktop-macos-${{ inputs.arch }}
+          path: ${{ steps.artifacts.outputs.dmg }}
+          if-no-files-found: error
+
+      - name: Upload ZIP as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: multica-desktop-macos-${{ inputs.arch }}-zip
+          path: ${{ steps.artifacts.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Upload DMG to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DMG="${{ steps.artifacts.outputs.dmg }}"
+          ZIP="${{ steps.artifacts.outputs.zip }}"
+          TAG="${{ inputs.release-tag }}"
+
+          echo "Uploading DMG ($DMG) to release $TAG ..."
+          gh release upload "$TAG" "$DMG" --clobber
+          echo "Uploading ZIP ($ZIP) to release $TAG ..."
+          gh release upload "$TAG" "$ZIP" --clobber
+
+          echo ""
+          echo "=== Release assets after upload ==="
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
