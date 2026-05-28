@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const setOpen = vi.fn();
 const replace = vi.fn();
@@ -16,12 +15,12 @@ vi.mock("@multica/core/paths", () => ({
   useWorkspaceSlug: () => "acme",
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-acme",
-}));
-
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({ replace, push, pathname: "/acme/chat" }),
+}));
+
+vi.mock("./chat-window", () => ({
+  ChatWindow: () => null,
 }));
 
 import { ChatPage } from "./chat-page";
@@ -31,16 +30,6 @@ describe("ChatPage", () => {
     setOpen.mockReset();
     replace.mockReset();
   });
-
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-
-  function withProviders(ui: React.ReactElement) {
-    return render(
-      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-    );
-  }
 
   afterEach(() => {
     Object.defineProperty(window, "innerWidth", {
@@ -56,7 +45,7 @@ describe("ChatPage", () => {
       writable: true,
       value: 1280,
     });
-    withProviders(<ChatPage />);
+    render(<ChatPage />);
     expect(setOpen).toHaveBeenCalledWith(true);
     expect(replace).toHaveBeenCalledWith("/acme/issues");
   });
@@ -67,7 +56,7 @@ describe("ChatPage", () => {
       writable: true,
       value: 390,
     });
-    withProviders(<ChatPage />);
+    render(<ChatPage />);
     expect(setOpen).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
   });
