@@ -16,6 +16,10 @@ vi.mock("@multica/core/paths", () => ({
   useWorkspaceSlug: () => "acme",
 }));
 
+vi.mock("@multica/core/hooks", () => ({
+  useWorkspaceId: () => "ws-acme",
+}));
+
 vi.mock("../../navigation", () => ({
   useNavigation: () => ({ replace, push, pathname: "/acme/chat" }),
 }));
