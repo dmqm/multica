@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { useTrayDashboardData } from "./useTrayDashboardData";
-import { setApiInstance, type ApiClientType } from "@multica/core/api";
+import { setApiInstance, ApiClient } from "@multica/core/api";
 import type { InboxItem, Issue, IssueStatus } from "@multica/core/types";
 
 function createWrapper(queryClient: QueryClient) {
@@ -55,7 +55,7 @@ function createMockIssue(overrides: Partial<Issue> = {}): Issue {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
-  };
+  } as Issue;
 }
 
 function mockWSClient() {
@@ -99,7 +99,7 @@ function installApiMocks(mocks: Mocks) {
     listInbox: mocks.listInbox,
     listIssues: mocks.listIssues,
     getAgentTaskSnapshot: mocks.getAgentTaskSnapshot,
-  } as unknown as ApiClientType;
+  } as unknown as ApiClient;
   setApiInstance(api);
 }
 
@@ -190,7 +190,7 @@ describe("useTrayDashboardData", () => {
 
     await waitFor(() => {
       expect(result.current.issues).toHaveLength(1);
-      expect(result.current.issues[0].status).toBe("in_progress");
+      expect(result.current.issues[0]!.status).toBe("in_progress");
     });
   });
 
@@ -377,7 +377,7 @@ describe("useTrayDashboardData", () => {
 
     await waitFor(() => {
       expect(result.current.tasks).toHaveLength(1);
-      expect(result.current.tasks[0].status).toBe("running");
+      expect(result.current.tasks[0]!.status).toBe("running");
     });
   });
 
@@ -418,7 +418,7 @@ describe("useTrayDashboardData", () => {
       expect(result.current.unreadCount).toBe(1);
     });
     expect(result.current.unreadItems).toHaveLength(1);
-    expect(result.current.unreadItems[0].issue_id).toBe("iss-a");
+    expect(result.current.unreadItems[0]!.issue_id).toBe("iss-a");
   });
 
   it("triggers reconnect refresh on WS reconnect", async () => {
