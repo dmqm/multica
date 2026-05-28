@@ -1,5 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { ApiClient, setApiInstance } from "@multica/core/api";
 import { WSClient } from "@multica/core/api/ws-client";
 import { createLogger } from "@multica/core/logger";
@@ -17,13 +16,12 @@ interface TrayConfig {
 }
 
 export function TrayApp() {
-  const queryClient = useQueryClient();
   const [config, setConfig] = useState<TrayConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WSClient | null>(null);
 
   useEffect(() => {
-    const trayAPI = (window as Record<string, unknown>).trayAPI as
+    const trayAPI = (window as unknown as Record<string, unknown>).trayAPI as
       | { getConfig: () => TrayConfig | null }
       | undefined;
 
@@ -75,7 +73,7 @@ export function TrayApp() {
 
   const handleNotification = useCallback(
     (payload: { title: string; body: string; issueKey?: string; itemId?: string }) => {
-      const trayAPI = (window as Record<string, unknown>).trayAPI as
+      const trayAPI = (window as unknown as Record<string, unknown>).trayAPI as
         | {
             showNotification?: (p: {
               title: string;
@@ -94,7 +92,7 @@ export function TrayApp() {
 
   const handleBadgeUpdate = useCallback(
     (count: number) => {
-      const trayAPI = (window as Record<string, unknown>).trayAPI as
+      const trayAPI = (window as unknown as Record<string, unknown>).trayAPI as
         | { setBadge?: (count: number) => void }
         | undefined;
 

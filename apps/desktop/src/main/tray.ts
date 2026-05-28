@@ -69,18 +69,18 @@ export async function startTray(): Promise<void> {
     return;
   }
 
+  const viteEnv = import.meta.env as ImportMetaEnv & {
+    readonly VITE_API_URL?: string;
+    readonly VITE_WS_URL?: string;
+    readonly VITE_APP_URL?: string;
+  };
+
   const runtimeConfigResult: RuntimeConfigResult = await loadRuntimeConfig({
     isDev: is.dev,
     env: {
-      apiUrl: (import.meta as Record<string, unknown>).env
-        ? ((import.meta as { env: Record<string, string> }).env.VITE_API_URL)
-        : undefined,
-      wsUrl: (import.meta as Record<string, unknown>).env
-        ? ((import.meta as { env: Record<string, string> }).env.VITE_WS_URL)
-        : undefined,
-      appUrl: (import.meta as Record<string, unknown>).env
-        ? ((import.meta as { env: Record<string, string> }).env.VITE_APP_URL)
-        : undefined,
+      apiUrl: viteEnv.VITE_API_URL,
+      wsUrl: viteEnv.VITE_WS_URL,
+      appUrl: viteEnv.VITE_APP_URL,
     },
   });
 
