@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const setOpen = vi.fn();
 const replace = vi.fn();
@@ -27,6 +28,16 @@ describe("ChatPage", () => {
     replace.mockReset();
   });
 
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  function withProviders(ui: React.ReactElement) {
+    return render(
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    );
+  }
+
   afterEach(() => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -41,7 +52,7 @@ describe("ChatPage", () => {
       writable: true,
       value: 1280,
     });
-    render(<ChatPage />);
+    withProviders(<ChatPage />);
     expect(setOpen).toHaveBeenCalledWith(true);
     expect(replace).toHaveBeenCalledWith("/acme/issues");
   });
@@ -52,7 +63,7 @@ describe("ChatPage", () => {
       writable: true,
       value: 390,
     });
-    render(<ChatPage />);
+    withProviders(<ChatPage />);
     expect(setOpen).not.toHaveBeenCalled();
     expect(replace).not.toHaveBeenCalled();
   });
