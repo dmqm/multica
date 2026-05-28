@@ -19,6 +19,10 @@ vi.mock("../../navigation", () => ({
   useNavigation: () => ({ replace, push, pathname: "/acme/chat" }),
 }));
 
+vi.mock("./chat-window", () => ({
+  ChatWindow: () => null,
+}));
+
 import { ChatPage } from "./chat-page";
 
 describe("ChatPage", () => {
