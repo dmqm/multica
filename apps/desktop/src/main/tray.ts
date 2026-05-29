@@ -169,7 +169,7 @@ function createTrayWindow(): void {
     const url = `${process.env["ELECTRON_RENDERER_URL"]}tray/index.html`;
     trayWindow.loadURL(url);
   } else {
-    trayWindow.loadFile(pathJoin(__dirname, "../renderer/tray/index.html"));
+    trayWindow.loadFile(pathJoin(__dirname, "../renderer/src/tray/index.html"));
   }
 }
 
